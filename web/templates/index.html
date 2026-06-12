@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pokémon Monitor Pro</title>
+    <base href="{{ '/' if not base_path else '/' + base_path + '/' }}">
+    <link rel="stylesheet" href="static/style.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+</head>
+<body>
+    <div class="container">
+
+        <!-- Subscription Ribbon -->
+        <div id="sub-ribbon" class="sub-ribbon sub-loading">
+            <span id="sub-icon">⏳</span>
+            <span id="sub-text">Verificando suscripción...</span>
+            <span id="sub-plan" class="sub-plan-badge"></span>
+        </div>
+
+        <!-- Header -->
+        <header>
+            <div class="title-row">
+                <h1>Pokémon Monitor Pro</h1>
+                <div id="live-dot" class="live-dot">
+                    <span class="dot"></span> EN VIVO
+                </div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span id="stat-watchlist" class="stat-value">0</span>
+                    <span class="stat-label">Watchlist</span>
+                </div>
+                <div class="stat-card">
+                    <span id="stat-active" class="stat-value">0</span>
+                    <span class="stat-label">Activos</span>
+                </div>
+                <div class="stat-card">
+                    <span id="stat-discovered" class="stat-value">0</span>
+                    <span class="stat-label">Descubiertos</span>
+                </div>
+                <div class="stat-card">
+                    <span id="stat-mem" class="stat-value">0</span>
+                    <span class="stat-label">Memorias</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="switchTab('watchlist')">🔍 Watchlist</button>
+            <button class="tab-btn" onclick="switchTab('realtime')">⚡ Estado Real</button>
+            <button class="tab-btn" onclick="switchTab('discovery')">✨ Discoveries</button>
+        </div>
+
+        <!-- TAB: Watchlist Control -->
+        <div id="tab-watchlist" class="tab-content active">
+            <div class="section-card">
+                <h2 class="section-title">📦 Gestión de Productos</h2>
+                <div class="form-row">
+                    <input type="text" id="new-name" placeholder="Nombre del producto">
+                    <input type="text" id="new-url" placeholder="URL de Amazon México">
+                    <input type="number" id="new-max-price" placeholder="Max precio (MXN)" step="0.01" style="width:140px">
+                    <label class="small-inline"><input type="checkbox" id="new-amazon-only" checked> Solo Amazon MX</label>
+                    <button onclick="addProduct()" class="btn-primary btn-inline">+ Añadir</button>
+                </div>
+                <div id="add-feedback" class="feedback-msg"></div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-tbody">
+                        <tr><td colspan="3" class="empty-row">Cargando...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TAB: Real-time State -->
+        <div id="tab-realtime" class="tab-content">
+            <div class="section-card">
+                <h2 class="section-title">⚡ Estado en Tiempo Real</h2>
+                <div id="snapshots-grid" class="snapshot-grid">
+                    <div class="empty-state">Cargando snapshots...</div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- TAB: Discovery -->
+        <div id="tab-discovery" class="tab-content">
+            <div class="section-card">
+                <div class="header-with-action">
+                    <h2 class="section-title">✨ Nuevas Publicaciones Descubiertas</h2>
+                    <button onclick="clearDiscovery()" class="btn-delete-sm">🗑️ Borrar Todo</button>
+                </div>
+                <p class="section-desc">Ordenados por más reciente. Agrega directamente a la Watchlist con un clic.</p>
+                <div id="discovery-grid" class="discovery-grid">
+                    <div class="empty-state">Cargando descubrimientos...</div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /container -->
+
+    <script>
+    // ── Globals ───────────────────────────────────────────────────────────────
+    let allProducts = [];
+    let editingIndex = null;
+
+    // ── Tab Switching ─────────────────────────────────────────────────────────
+    function switchTab(name) {
+        const tabs = ['watchlist','realtime','discovery'];
+        document.querySelectorAll('.tab-btn').forEach((b, i) => {
+            b.classList.toggle('active', tabs[i] === name);
+        });
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        const targetTab = document.getElementById('tab-' + name);
+        if (targetTab) targetTab.classList.add('active');
+    }
+
+    // ── Subscription ─────────────────────────────────────────────────────────
+    async function fetchSubscription() {
+        try {
+            const res = await fetch('api/subscription');
+            const s   = await res.json();
+            const ribbon = document.getElementById('sub-ribbon');
+            const icon   = document.getElementById('sub-icon');
+            const text   = document.getElementById('sub-text');
+            const badge  = document.getElementById('sub-plan');
+            ribbon.className = 'sub-ribbon ' + (s.valid ? 'sub-active' : 'sub-expired');
+            icon.textContent  = s.valid ? '✅' : '❌';
+            text.textContent  = s.valid
+                ? `Suscripción activa • ${s.owner} • ${s.days_left} día(s) restante(s)`
+                : `Suscripción inactiva • ${s.message}`;
+            badge.textContent = (s.plan || 'N/A').toUpperCase();
+            badge.style.display = 'inline-block';
+        } catch (e) {
+            console.warn('Subscription fetch failed', e);
+        }
+    }
+
+    // ── Stats ─────────────────────────────────────────────────────────────────
+    async function fetchStats() {
+        const res  = await fetch('api/status');
+        const data = await res.json();
+        document.getElementById('stat-watchlist').textContent = data.watchlist_count;
+        document.getElementById('stat-active').textContent   = data.active_count;
+        document.getElementById('stat-discovered').textContent = data.discovered_count;
+        document.getElementById('stat-mem').textContent       = data.memory_count;
+    }
+
+    // ── Products (Watchlist) ──────────────────────────────────────────────────
+    async function fetchProducts() {
+        const res = await fetch('api/products');
+        allProducts = await res.json();
+        renderProducts();
+    }
+
+    function renderProducts() {
+        const tbody = document.getElementById('products-tbody');
+        tbody.innerHTML = '';
+        if (!allProducts || allProducts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" class="empty-row">No hay productos en la watchlist.</td></tr>';
+            return;
+        }
+        allProducts.forEach((p, i) => {
+            const tr = document.createElement('tr');
+            if (editingIndex === i) {
+                tr.innerHTML = `
+                    <td colspan="2">
+                        <div class="edit-row">
+                            <input type="text" id="edit-name-${i}" value="${escapeHtml(p.name)}" placeholder="Nombre">
+                            <input type="text" id="edit-url-${i}" value="${escapeHtml(p.url)}" placeholder="URL">
+                            <input type="number" id="edit-maxprice-${i}" value="${p.max_price || ''}" placeholder="Max precio" step="0.01" style="width:120px">
+                            <label class="small-inline"><input type="checkbox" id="edit-amazononly-${i}" ${p.amazon_only ? 'checked' : ''}> Solo Amazon MX</label>
+                        </div>
+                    </td>
+                    <td>
+                        <button onclick="saveEdit(${i})" class="btn-save">💾</button>
+                        <button onclick="cancelEdit()" class="btn-cancel">✕</button>
+                    </td>`;
+            } else {
+                const activeIcon = p.active !== false ? '🟢' : '🔴';
+                tr.innerHTML = `
+                    <td>
+                        <a href="${escapeHtml(p.url)}" target="_blank" class="product-link">${escapeHtml(p.name)}</a>
+                    </td>
+                    <td><span class="active-badge">${activeIcon} ${p.active !== false ? 'Activo' : 'Pausado'}</span>
+                        <div class="meta-small">Max: ${p.max_price || 'N/D'} • ${p.amazon_only ? 'Amazon only' : 'Any seller'}</div>
+                    </td>
+                    <td>
+                        <button onclick="toggleActive(${i})" class="btn-icon" title="Toggle activo">⏸️</button>
+                        <button onclick="startEdit(${i})" class="btn-icon" title="Editar">✏️</button>
+                        <button onclick="deleteProduct(${i})" class="btn-delete-sm" title="Eliminar">🗑️</button>
+                    </td>`;
+            }
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function addProduct() {
+        const name = document.getElementById('new-name').value.trim();
+        const url  = document.getElementById('new-url').value.trim();
+        const max_price = document.getElementById('new-max-price').value.trim();
+        const amazon_only = document.getElementById('new-amazon-only').checked;
+        const fb   = document.getElementById('add-feedback');
+        if (!name || !url) { showFeedback(fb, '⚠️ Rellena nombre y URL', 'warn'); return; }
+        const res = await fetch('api/products', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, url, max_price: max_price || null, amazon_only})
+        });
+        if (res.status === 201) {
+            document.getElementById('new-name').value = '';
+            document.getElementById('new-url').value  = '';
+            showFeedback(fb, '✅ Producto añadido', 'ok');
+            refresh();
+        } else {
+            const d = await res.json();
+            showFeedback(fb, '❌ ' + (d.error || 'Error'), 'error');
+        }
+    }
+
+    async function deleteProduct(index) {
+        if (!confirm(`¿Eliminar "${allProducts[index]?.name}"?`)) return;
+        await fetch(`api/products/${index}`, {method: 'DELETE'});
+        refresh();
+    }
+
+    function startEdit(i) { editingIndex = i; renderProducts(); }
+    function cancelEdit()  { editingIndex = null; renderProducts(); }
+
+    async function saveEdit(i) {
+        const name = document.getElementById(`edit-name-${i}`).value.trim();
+        const url  = document.getElementById(`edit-url-${i}`).value.trim();
+        const max_price = document.getElementById(`edit-maxprice-${i}`).value.trim();
+        const amazon_only = document.getElementById(`edit-amazononly-${i}`).checked;
+        if (!name || !url) return;
+        await fetch(`api/products/${i}`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name, url, max_price: max_price || null, amazon_only})
+        });
+        editingIndex = null;
+        refresh();
+    }
+
+    async function toggleActive(i) {
+        const current = allProducts[i]?.active !== false;
+        await fetch(`api/products/${i}`, {
+            method: 'PUT', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({active: !current})
+        });
+        refresh();
+    }
+
+    // ── Snapshots ─────────────────────────────────────────────────────────────
+    async function fetchSnapshots() {
+        const res  = await fetch('api/snapshots');
+        const data = await res.json();
+        const grid = document.getElementById('snapshots-grid');
+        const items = Object.values(data);
+        if (items.length === 0) {
+            grid.innerHTML = '<div class="empty-state">Sin datos de monitoreo aún.</div>';
+            return;
+        }
+        grid.innerHTML = items.map(s => {
+            const badgeClass = s.in_stock ? 'badge-stock' : 'badge-empty';
+            const badgeText  = s.in_stock ? 'EN STOCK' : 'AGOTADO';
+            const imgHtml = s.image_url ? `<img src="${s.image_url}" class="snap-image" loading="lazy" alt="img">` : `<div class="snap-image-placeholder">No Img</div>`;
+            return `
+            <div class="snapshot-item ${s.in_stock ? 'item-stock' : 'item-empty'}">
+                <div class="snap-top">
+                    <span class="badge ${badgeClass}">${badgeText}</span>
+                    <span class="snap-seller">${escapeHtml(s.seller || '')}</span>
+                </div>
+                <div class="snap-content">
+                    ${imgHtml}
+                    <div class="snap-details">
+                        <div class="snap-title" title="${escapeHtml(s.title || s.name || '')}">${escapeHtml(s.title || s.name || '')}</div>
+                        <div class="price-tag">${escapeHtml(s.price || 'N/D')}</div>
+                    </div>
+                </div>
+                <a href="${escapeHtml(s.url)}" target="_blank" class="amazon-link">Ver en Amazon →</a>
+            </div>`;
+        }).join('');
+    }
+
+    // ── Discovery ─────────────────────────────────────────────────────────────
+    async function fetchDiscovery() {
+        const res   = await fetch('api/discovered');
+        const items = await res.json();
+        const grid  = document.getElementById('discovery-grid');
+        if (!items || items.length === 0) {
+            grid.innerHTML = '<div class="empty-state">Aún no se descubrieron productos nuevos.</div>';
+            return;
+        }
+        grid.innerHTML = items.slice(0, 80).map(d => {
+            const age = d.first_seen ? timeAgo(d.first_seen) : 'Desconocido';
+            const isFresh = d.first_seen && (Date.now()/1000 - d.first_seen) < 20*60;
+            const imgHtml = d.image_url ? `<img src="${d.image_url}" class="disc-image" loading="lazy" alt="img">` : `<div class="snap-image-placeholder">No Img</div>`;
+            return `
+            <div class="disc-item ${isFresh ? 'disc-fresh' : ''}">
+                ${isFresh ? '<span class="fresh-badge">🆕 NUEVO</span>' : ''}
+                <div class="disc-content">
+                    ${imgHtml}
+                    <div class="disc-details">
+                        <div class="disc-name" title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</div>
+                        <div class="disc-meta">ASIN: ${escapeHtml(d.asin)} &bull; ${age}</div>
+                        <div class="disc-price">${escapeHtml(d.price || 'N/D')}</div>
+                    </div>
+                </div>
+                <div class="disc-actions">
+                    <a href="${escapeHtml(d.url)}" target="_blank" class="amazon-link">Ver →</a>
+                    <button onclick="addDiscoveredToWatchlist('${escapeHtml(d.asin)}', '${escapeHtml(d.name).replace(/'/g, "\\'")}')"
+                            class="btn-add-disc" title="Añadir a Watchlist">+ Watchlist</button>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function addDiscoveredToWatchlist(asin, name) {
+        const res = await fetch('api/discovered/add-to-watchlist', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({asin, name})
+        });
+        const d = await res.json();
+        if (res.ok) {
+            alert(`✅ "${name}" añadido a la watchlist.`);
+            fetchProducts();
+            fetchStats();
+        } else {
+            alert('⚠️ ' + (d.error || 'Error'));
+        }
+    }
+
+    async function clearDiscovery() {
+        if (!confirm('¿Estás seguro de que quieres borrar todos los productos descubiertos? ESTO NO SE PUEDE DESHACER.')) return;
+        try {
+            const res = await fetch('api/discovered', { method: 'DELETE' });
+            if (res.ok) {
+                refresh();
+            } else {
+                const d = await res.json();
+                alert('❌ Error: ' + (d.error || 'No se pudo limpiar la lista.'));
+            }
+        } catch (e) {
+            console.error('Error in clearDiscovery', e);
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function timeAgo(ts) {
+        const diffS = Math.floor(Date.now() / 1000 - ts);
+        if (diffS < 60) return `${diffS}s atrás`;
+        if (diffS < 3600) return `${Math.floor(diffS/60)}min atrás`;
+        if (diffS < 86400) return `${Math.floor(diffS/3600)}h atrás`;
+        return `${Math.floor(diffS/86400)}d atrás`;
+    }
+
+    function showFeedback(el, msg, type) {
+        el.textContent = msg;
+        el.className   = 'feedback-msg feedback-' + type;
+        setTimeout(() => { el.textContent = ''; el.className = 'feedback-msg'; }, 3000);
+    }
+
+    function refresh() {
+        fetchStats();
+        fetchProducts();
+        fetchSnapshots();
+        fetchDiscovery();
+    }
+
+
+    // Init
+    fetchSubscription();
+    refresh();
+    setInterval(refresh, 8000);
+    setInterval(fetchSubscription, 60000);
+    </script>
+</body>
+</html>

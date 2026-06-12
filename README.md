@@ -1,2 +1,2 @@
-# PBS
-Pokemon bot server
+# pokemon-bot
+Bot scrapping

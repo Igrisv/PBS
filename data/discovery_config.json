@@ -1,0 +1,34 @@
+{
+  "searches": [
+    {
+      "name": "Búsqueda Predeterminada",
+      "url": "https://www.amazon.com.mx/s?k=pokemon",
+      "enabled": true
+    },
+    {
+      "name": "Pokemon Peluches",
+      "url": "https://www.amazon.com.mx/s?k=pokemon+peluches",
+      "enabled": false
+    }
+  ],
+  "excluded_keywords": [
+    "peluche",
+    "plush",
+    "baraja",
+    "barajas",
+    "cover",
+    "coverter",
+    "cubierta",
+    "protector",
+    "sleeve",
+    "sleeves"
+  ],
+  "preorder_keywords": [
+    "reservar",
+    "reservar ahora",
+    "preventa",
+    "próximamente"
+  ],
+  "max_product_age_days": 365,
+  "max_asins_per_search": 20
+}

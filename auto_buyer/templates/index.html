@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-Buyer Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.2.47/dist/vue.global.js"></script>
+</head>
+<body>
+    {% raw %}
+    <div id="app">
+        <header class="navbar">
+            <div class="logo">
+                <span class="icon">🛒</span>
+                <h1>Ascend Auto-Buyer</h1>
+            </div>
+            <div class="header-status">
+                <div class="session-badge" :class="sessionStatus">
+                    <span class="status-dot"></span>
+                    Sesión: {{ sessionStatus === 'active' ? 'Activa' : (sessionStatus === 'expired' ? 'Expirada' : 'Faltante') }}
+                </div>
+            </div>
+        </header>
+
+        <main class="container">
+            <section class="global-settings card glass">
+                <h2>Configuración Global</h2>
+                <div class="settings-grid">
+                    <div class="setting-item">
+                        <label>Intervalo de Chequeo (segundos)</label>
+                        <div class="input-group">
+                            <input type="number" v-model="settings.check_interval" min="5" />
+                            <button @click="saveSettings" class="btn btn-primary">Guardar</button>
+                        </div>
+                        <small>El bot recargará este valor solo al reiniciar.</small>
+                    </div>
+                    <div class="setting-item">
+                        <label>Agregar Nuevo Producto</label>
+                        <form @submit.prevent="addProduct" class="add-product-form">
+                            <input type="text" v-model="newProduct.name" placeholder="Nombre (ej. Eevee Tin)" required>
+                            <input type="url" v-model="newProduct.url" placeholder="URL de Amazon MX" required>
+                            <div class="input-group">
+                                <input type="number" v-model="newProduct.quantity" min="1" max="10" placeholder="Cant." required style="width: 80px;">
+                                <button type="submit" class="btn btn-success">Añadir</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </section>
+
+            <section class="products-list">
+                <h2>Productos Objetivo ({{ products.length }})</h2>
+                <div class="grid">
+                    <div v-for="product in products" :key="product.url" class="card product-card" :class="{'disabled': !product.enabled}">
+                        <div class="card-header">
+                            <h3>{{ product.name }}</h3>
+                            <label class="toggle-switch">
+                                <input type="checkbox" :checked="product.enabled" @change="toggleEnabled(product)">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="card-body">
+                            <div class="product-layout">
+                                <div class="product-image">
+                                    <img v-if="product.image_url" :src="product.image_url" :alt="product.name">
+                                    <div v-else class="img-placeholder">🛒</div>
+                                </div>
+                                <div class="product-details">
+                                    <p class="url-text"><a :href="product.url" target="_blank" title="Abrir en Amazon">Ver en Amazon ↗</a></p>
+                                    
+                                    <div class="action-row">
+                                        <div class="quantity-control">
+                                            <label>Comprar Cant:</label>
+                                            <input type="number" :value="product.quantity" @change="updateQuantity(product, $event.target.value)" min="1" max="10">
+                                        </div>
+                                        <div class="status-badge" :class="{'bought': product.is_bought, 'pending': !product.is_bought}">
+                                            {{ product.is_bought ? 'Comprado' : 'Pendiente' }}
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="card-footer">
+                                        <button v-if="product.is_bought" @click="resetBought(product.url)" class="btn btn-warning btn-sm">Re-comprar</button>
+                                        <button @click="deleteProduct(product.url)" class="btn btn-danger btn-sm">Eliminar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div v-if="products.length === 0" class="empty-state">
+                    No hay productos configurados. Añade uno para comenzar.
+                </div>
+            </section>
+        </main>
+    </div>
+    {% endraw %}
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    products: [],
+                    sessionStatus: 'missing',
+                    settings: {
+                        check_interval: 45
+                    },
+                    newProduct: {
+                        name: '',
+                        url: '',
+                        quantity: 1
+                    }
+                }
+            },
+            mounted() {
+                this.fetchData();
+                setInterval(this.fetchData, 10000); // Reload data every 10s
+            },
+            methods: {
+                async fetchData() {
+                    try {
+                        const res = await fetch('/api/config');
+                        const data = await res.json();
+                        this.products = data.products;
+                        this.settings.check_interval = data.check_interval;
+                        this.sessionStatus = data.session_status;
+                    } catch (e) {
+                        console.error("Error fetching data:", e);
+                    }
+                },
+                async addProduct() {
+                    const res = await fetch('/api/product', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(this.newProduct)
+                    });
+                    if (res.ok) {
+                        this.newProduct = { name: '', url: '', quantity: 1 };
+                        this.fetchData();
+                    } else {
+                        const error = await res.json();
+                        alert("Error: " + error.error);
+                    }
+                },
+                async toggleEnabled(product) {
+                    await fetch('/api/product/update', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ url: product.url, field: 'enabled', value: !product.enabled })
+                    });
+                    this.fetchData();
+                },
+                async updateQuantity(product, newQty) {
+                    await fetch('/api/product/update', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ url: product.url, field: 'quantity', value: newQty })
+                    });
+                    this.fetchData();
+                },
+                async deleteProduct(url) {
+                    if (confirm("¿Eliminar este producto?")) {
+                        await fetch('/api/product/delete', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ url: url })
+                        });
+                        this.fetchData();
+                    }
+                },
+                async resetBought(url) {
+                    if (confirm("¿Permitir que el bot compre esto otra vez? (Se borrará del historial)")) {
+                        await fetch('/api/product/reset_bought', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ url: url })
+                        });
+                        this.fetchData();
+                    }
+                },
+                async saveSettings() {
+                    await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ check_interval: this.settings.check_interval })
+                    });
+                    alert("Ajustes guardados.");
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

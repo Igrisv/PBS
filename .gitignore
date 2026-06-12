@@ -1,0 +1,43 @@
+# Python / virtualenv
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Local environment and secrets
+.env
+.env.*
+license.json
+
+# Runtime/generated files
+*.log
+monitor_state.json
+discovered.json
+
+# WhatsApp / node dependencies
+node_modules/
+whatsapp_bridge/node_modules/
+whatsapp_bridge/.wwebjs_cache/
+whatsapp_bridge/sessions/
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+
+# Book build output
+_book
+
+# eBook build output
+*.epub
+*.mobi
+*.pdf
+
+# Auto-buyer sensitive/runtime files
+auto_buyer/amazon_session.json*
+auto_buyer/debug_*.png
+auto_buyer/*.log
+auto_buyer/bought_products.json

@@ -1,0 +1,9 @@
+requests
+python-dotenv
+flask
+flask-cors
+beautifulsoup4
+lxml
+playwright
+playwright-stealth
+portalocker

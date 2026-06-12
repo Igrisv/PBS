@@ -1,0 +1,20 @@
+{
+  "product_alert": {
+    "header_stock": "🚨 ⚠️ <b>ALERTA DE STOCK</b> ⚠️ 🚨",
+    "header_restock": "🔄 <b>REABASTECIMIENTO</b> 🔄",
+    "header_new": "✨ 🆕 <b>NUEVO LANZAMIENTO</b> 🆕 ✨",
+    "header_price": "💰 💲 <b>CAMBIO DE PRECIO</b> 💲 💰",
+    "header_preorder": "🔔 <b>PREVENTA DE POKÉMON</b> 🔔",
+    "header_default": "🚨 <b>ALERTA DE POKÉMON</b> 🚨",
+    "label_product": "📦 <b>Producto:</b>",
+    "label_status": "🔍 <b>Estado:</b>",
+    "label_price": "💰 <b>Precio:</b>",
+    "footer_text": "🛒 Comprar en Amazon",
+    "show_footer": true
+  },
+  "broadcast": {
+    "header": "📢 <b>MENSAJE DE ADMINISTRACIÓN</b> 📢",
+    "body_format": "{message}",
+    "footer": "🛡️ <i>Pokemon Bot System</i>"
+  }
+}

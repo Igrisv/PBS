@@ -1,0 +1,6 @@
+# Agregue sus proxies aquí, uno por línea.
+# Formatos soportados:
+# http://host:port
+# http://user:pass@host:port
+# https://host:port
+# https://user:pass@host:port

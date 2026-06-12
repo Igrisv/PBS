@@ -1,0 +1,28 @@
+{
+  "comment": "Lista de productos de Ascend Heroes a comprar automáticamente. Agrega o quita entradas según necesites.",
+  "target_products": [
+    {
+      "name": "Pokémon TCG: Team Rocket Tin - Persian",
+      "url": "https://www.amazon.com.mx/Pok%C3%A9mon-TCG-Team-Rocket-Persian/dp/B0FH5PKCNQ/ref=sr_1_13?sr=8-13",
+      "enabled": true
+    },
+    {
+      "name": "Test Product",
+      "url": "https://www.amazon.com.mx/dp/B00example",
+      "enabled": true,
+      "quantity": 1
+    },
+    {
+      "name": "Pokémon TCG: Mega Evolution— Ascended Heroes Booster Bundle",
+      "url": "https://www.amazon.com.mx/Pok%C3%A9mon-TCG-Evolution-Ascended-Booster/dp/B0G3CV6Z9D/ref=sr_1_12_so_COLLECTIBLE_CARD?sr=8-12",
+      "enabled": false,
+      "quantity": 1,
+      "image_url": "https://m.media-amazon.com/images/I/81sZheTQIhL._AC_UF350,350_QL50_.jpg"
+    }
+  ],
+  "checkout": {
+    "max_quantity_per_product": 6,
+    "confirm_order": true,
+    "comment": "IMPORTANTE — confirm_order: true = compra real. false = DRY-RUN (llega a la última pantalla pero NO confirma el pedido)."
+  }
+}

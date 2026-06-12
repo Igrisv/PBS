@@ -1,0 +1,18 @@
+{
+  "telegram": {
+    "bot_token": "8663802610:AAGCdvpa38FUWtOH3E61w-BR9n6dnZCDI3E",
+    "chat_id": "-5208315739"
+  },
+  "whatsapp_meta": {
+    "access_token": "EAAW0wGuIZCF0BRnZC6msjSSxo1dh6y6n6m4MDQRZCDshqNN5KaEwMXENXeHOZA6oqEGInpSdtA11Ccl5We9nfapqGMoOtRYMfEmCCGkJsRfZC5vGQAXZArcmIoeWd0nh0MNOprZBciSXiqPDdI0W0xLaJ0gIqcG0M7dQxQEeW4qgVzz47vgtNgWhmTmcLeIJAZDZD",
+    "phone_number_id": "1115791351623874",
+    "to_number": "584248144067",
+    "template_name": "inventory_update",
+    "language_code": "en"
+  },
+  "whatsapp_bridge": {
+    "bridge_url": "http://localhost:3000",
+    "community_id": "120363409547448105@g.us",
+    "ascended_chat_id": "120363409547448105@g.us"
+  }
+}
