@@ -22,8 +22,11 @@ let bridgeState = {
     phone: null,
     startTime: Date.now(),
     lastQR: null,
+    qrTime: null,   // timestamp when the last QR was generated
     chats: []
 };
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ─── Utilidad de Log ────────────────────────────────────────────────────────
 function bridgeLog(type, message) {
@@ -63,7 +66,8 @@ client.on('qr', async (qr) => {
             color: { dark: '#0f172a', light: '#f8fafc' }
         });
         bridgeState.lastQR = qrDataURL;
-        io.emit('qr', { qr: qrDataURL });
+        bridgeState.qrTime = Date.now();
+        io.emit('qr', { qr: qrDataURL, qrTime: bridgeState.qrTime });
         io.emit('status', { status: 'connecting', phone: null });
     } catch (err) {
         bridgeLog('error', 'Error generando QR PNG: ' + err.message);
@@ -92,7 +96,8 @@ client.on('ready', async () => {
     bridgeLog('success', `Bridge LISTO | Teléfono: ${bridgeState.phone}`);
     io.emit('status', { status: 'ready', phone: bridgeState.phone });
 
-    // Cargar chats al estar listo
+    // Esperar 2s para que wwjs sincronice los chats antes de pedirlos
+    await sleep(2000);
     await refreshChats();
 });
 
@@ -105,21 +110,56 @@ client.on('disconnected', (reason) => {
 });
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-async function refreshChats() {
-    try {
-        const chats = await client.getChats();
-        bridgeState.chats = chats.map(c => ({
-            id: c.id._serialized,
-            name: c.name || c.id.user,
-            isGroup: c.isGroup,
-            participants: c.isGroup ? (c.participants?.length ?? '?') : null,
-            unreadCount: c.unreadCount
-        }));
-        bridgeLog('info', `${bridgeState.chats.length} chats cargados`);
-        io.emit('chats', bridgeState.chats);
-    } catch (err) {
-        bridgeLog('error', 'Error cargando chats: ' + err.message);
+
+async function refreshChats(retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            bridgeLog('info', `Cargando chats (intento ${attempt}/${retries})…`);
+            const chats = await client.getChats();
+
+            if (!chats || chats.length === 0) {
+                bridgeLog('warn', `getChats() retornó vacío, reintentando en 3s…`);
+                await sleep(3000);
+                continue;
+            }
+
+            bridgeState.chats = chats.map(c => {
+                // participants viene de groupMetadata en wwjs recientes
+                let participantCount = null;
+                if (c.isGroup) {
+                    participantCount =
+                        c.groupMetadata?.participants?.length ??
+                        c.participants?.length ??
+                        '?';
+                }
+                return {
+                    id: c.id._serialized,
+                    name: c.name || c.id.user || c.id._serialized,
+                    isGroup: c.isGroup,
+                    participants: participantCount,
+                    unreadCount: c.unreadCount ?? 0
+                };
+            });
+
+            const groups = bridgeState.chats.filter(c => c.isGroup).length;
+            const dms    = bridgeState.chats.length - groups;
+            bridgeLog('success', `${bridgeState.chats.length} chats cargados (${groups} grupos, ${dms} DMs)`);
+
+            // Log grupos en consola (igual que antes)
+            console.log('\n--- GRUPOS DETECTADOS ---');
+            bridgeState.chats.filter(c => c.isGroup).forEach(g => {
+                console.log(`Nombre: ${g.name} | ID: ${g.id} | Participantes: ${g.participants}`);
+            });
+            console.log('-------------------------\n');
+
+            io.emit('chats', bridgeState.chats);
+            return; // éxito
+        } catch (err) {
+            bridgeLog('error', `Error cargando chats (intento ${attempt}): ${err.message}`);
+            if (attempt < retries) await sleep(3000);
+        }
     }
+    bridgeLog('error', 'No se pudieron cargar los chats después de varios intentos');
 }
 
 // ─── Socket.IO ──────────────────────────────────────────────────────────────
@@ -129,7 +169,7 @@ io.on('connection', (socket) => {
     // Enviar estado actual al nuevo cliente
     socket.emit('status', { status: bridgeState.status, phone: bridgeState.phone });
     if (bridgeState.status === 'connecting' && bridgeState.lastQR) {
-        socket.emit('qr', { qr: bridgeState.lastQR });
+        socket.emit('qr', { qr: bridgeState.lastQR, qrTime: bridgeState.qrTime });
     }
     if (bridgeState.chats.length > 0) {
         socket.emit('chats', bridgeState.chats);
@@ -168,6 +208,22 @@ app.post('/api/logout', async (req, res) => {
         bridgeLog('warn', 'Sesión cerrada desde el panel web');
         res.json({ success: true });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/reset-qr  — fuerza un nuevo QR sin cerrar sesión
+app.post('/api/reset-qr', async (req, res) => {
+    try {
+        bridgeState.lastQR = null;
+        bridgeState.qrTime = null;
+        bridgeState.status = 'connecting';
+        io.emit('status', { status: 'connecting', phone: null });
+        bridgeLog('info', 'Reseteando estado para generar nuevo QR…');
+        await client.resetState();
+        res.json({ success: true });
+    } catch (err) {
+        bridgeLog('error', 'Error al resetear QR: ' + err.message);
         res.status(500).json({ error: err.message });
     }
 });
