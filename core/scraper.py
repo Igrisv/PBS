@@ -224,36 +224,70 @@ def _extract_price(soup: BeautifulSoup) -> str:
 def _extract_seller(soup: BeautifulSoup) -> str:
     """
     Extrae el nombre del vendedor principal de la página.
-    Para Amazon MX busca texto literal 'Amazon México' en el buybox.
+    Cubre múltiples layouts de Amazon MX: tabular buybox, merchant-info,
+    desktop buybox, y el moderno apex_desktop.
     """
-    # Buscar en el tabular buybox (buybox estándar de Amazon MX)
-    tabular_buybox = soup.find("div", {"id": "tabular-buybox"})
-    if tabular_buybox:
-        text = tabular_buybox.get_text(" ", strip=True)
-        if "Amazon México" in text:
+    # Normaliza texto de posibles vendedores para evitar strings vacíos o ruido
+    def clean(txt: str) -> str:
+        txt = txt.strip()
+        # Eliminar prefijos comunes
+        for prefix in ["Vendido por", "Sold by", "Ships from and sold by"]:
+            if txt.lower().startswith(prefix.lower()):
+                txt = txt[len(prefix):].strip()
+        return txt if len(txt) > 1 else ""
+
+    # 1. tabular-buybox (layout más común en Amazon MX)
+    tabular = soup.find("div", {"id": "tabular-buybox"})
+    if tabular:
+        txt = tabular.get_text(" ", strip=True)
+        if "Amazon México" in txt:
             return "Amazon México"
 
-    # Buscar en merchant-info (versión compacta del buybox)
-    merchant_info = soup.find("div", {"id": "merchant-info"})
-    if merchant_info:
-        text = merchant_info.get_text(strip=True)
-        if "Amazon México" in text or "Amazon.com.mx" in text:
+    # 2. merchant-info (buybox compacto)
+    mi = soup.find("div", {"id": "merchant-info"})
+    if mi:
+        txt = mi.get_text(" ", strip=True)
+        if "Amazon México" in txt or "Amazon.com.mx" in txt:
             return "Amazon México"
-        # Enlace al perfil de vendedor externo
-        seller_link = merchant_info.find("a", {"id": "sellerProfileTriggerId"})
-        if seller_link:
-            return seller_link.get_text(strip=True)
-        return text
+        link = mi.find("a", {"id": "sellerProfileTriggerId"})
+        if link:
+            c = clean(link.get_text(strip=True))
+            if c: return c
+        c = clean(txt)
+        if c: return c
 
-    # Buscar enlace de vendedor directo
-    seller_link = soup.find("a", {"id": "sellerProfileTriggerId"})
-    if seller_link:
-        return seller_link.get_text(strip=True)
+    # 3. desktop buybox nuevo (apex_desktop / coreBuyboxGroup)
+    for box_id in ["apex_desktop", "coreBuyboxGroup", "desktop_buybox_feature_div"]:
+        box = soup.find(id=box_id)
+        if box:
+            txt = box.get_text(" ", strip=True)
+            if "Amazon México" in txt or "Amazon.com.mx" in txt:
+                return "Amazon México"
+            # Buscar enlace de vendedor dentro del box
+            link = box.find("a", {"id": "sellerProfileTriggerId"})
+            if link:
+                c = clean(link.get_text(strip=True))
+                if c: return c
+            # Buscar spans con texto cercano a "Vendido por"
+            for span in box.find_all("span"):
+                span_txt = span.get_text(strip=True)
+                if "Vendido por" in span_txt or "Sold by" in span_txt:
+                    c = clean(span_txt)
+                    if c: return c
+            break
 
-    # Fallback: si el texto de la página contiene "Amazon México" prominentemente
-    shipped_by = soup.find("span", string=re.compile(r"Amazon\.com\.mx|Amazon México", re.I))
-    if shipped_by:
-        return "Amazon México"
+    # 4. Enlace directo de sellerProfileTriggerId en cualquier parte
+    link = soup.find("a", {"id": "sellerProfileTriggerId"})
+    if link:
+        c = clean(link.get_text(strip=True))
+        if c: return c
+
+    # 5. Búsqueda en todo el HTML: «Vendido por Amazon México»
+    if re.search(r'Amazon\s*M[eé]xico|Amazon\.com\.mx', soup.get_text(" ")):
+        # Solo devolvemos Amazon México si está dentro del area de compra
+        buybox_area = soup.find(id=re.compile(r'buybox|buy-now|add-to-cart', re.I))
+        if buybox_area and re.search(r'Amazon\s*M[eé]xico|Amazon\.com\.mx', buybox_area.get_text(" ")):
+            return "Amazon México"
 
     return "Desconocido"
 
@@ -386,11 +420,7 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
 
     except Exception as e:
         logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
-        return False, []
-
-    except Exception as e:
-        logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
-        return False
+        return False, [], None
 
 
 def _has_multiple_sellers(soup: BeautifulSoup, text: str) -> bool:
@@ -454,7 +484,9 @@ def scrape(product_name: str, url: str) -> ProductSnapshot:
         if seller == "Amazon México":
             amazon_present = True
 
-        if has_multi or seller == "Desconocido":
+        # Consulta la página de ofertas si: hay múltiples vendedores o el vendedor es desconocido
+        should_check_offers = has_multi or seller == "Desconocido"
+        if should_check_offers:
             asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
             if asin_match:
                 asin = asin_match.group(1)
@@ -465,9 +497,11 @@ def scrape(product_name: str, url: str) -> ProductSnapshot:
                 if (price == "No disponible" or ".." in price) and offers_price:
                     price = offers_price
 
-                # Combinar listas de vendedores
+                # Combinar listas de vendedores y actualizar seller principal si era desconocido
                 for s in sellers_list:
                     if s not in all_sellers: all_sellers.append(s)
+                if seller == "Desconocido" and sellers_list:
+                    seller = sellers_list[0]  # El primero es el más relevante
                 
                 if amazon_present and not in_stock:
                     in_stock = True
