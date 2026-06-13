@@ -39,8 +39,7 @@ def load_products(products_path: str) -> list[dict]:
             all_products = json.load(f)
 
         active = [p for p in all_products if p.get("active", True)]
-        amazon_mx_only = [p for p in active if _is_amazon_mx_url(p.get("url", ""))]
-        return amazon_mx_only
+        return active
     except Exception as e:
         logger.error(f"[MONITOR] Error leyendo products.json: {e}")
         return []
@@ -147,6 +146,10 @@ def detect_change(
     if p_prev and p_curr and abs(p_prev - p_curr) > 1.0: # Cambio > $1 MXN
         return "price_change"
 
+    # Caso 5: PREVENTA (Detectada ahora)
+    if curr.is_preorder and (prev is None or not prev.is_preorder):
+        return "preorder"
+
     return None
 
 
@@ -226,7 +229,10 @@ def run_monitor(
                 continue
             
             status_icon = "✅" if curr.in_stock else "❌"
-            logger.info(f"  {status_icon} {curr.availability_text} | {curr.price} | Vendedor: {curr.seller}")
+            preorder_tag = " [PREVENTA]" if curr.is_preorder else ""
+            logger.info(f"  {status_icon}{preorder_tag} {curr.availability_text} | {curr.price} | Vendedor: {curr.seller}")
+            if len(curr.sellers) > 1:
+                logger.info(f"    👥 Otros vendedores: {', '.join(curr.sellers[1:5])}")
 
             should_alert, filter_reason = should_alert_for_product(product, curr)
             if not should_alert:

@@ -46,6 +46,8 @@ class ProductSnapshot:
     normalized_title: str = "" # Título limpio para comparaciones
     amazon_present: bool = False  # True si Amazon MX aparece entre las ofertas
     image_url: Optional[str] = None # URL de la imagen del producto
+    is_preorder: bool = False     # True si el producto está en preventa
+    sellers: list[str] = field(default_factory=list) # Lista de vendedores encontrados
 
 # ─── Configuración de Proxies ────────────────────────────────────────────────
 PROXIES_FILE = Path(__file__).resolve().parent.parent / "data" / "proxies.txt"
@@ -152,28 +154,28 @@ def _extract_availability(soup: BeautifulSoup) -> tuple[bool, str]:
                              "en existencia", "queda", "quedan"]
 
         if any(k in text_lower for k in preorder_keywords):
-            return False, text
+            return True, text, True # En stock (para alerta), pero es preventa
 
         if any(k in text_lower for k in out_of_stock_keywords):
-            return False, text
+            return False, text, False
         if any(k in text_lower for k in in_stock_keywords):
-            return True, text
+            return True, text, False
 
         # Si hay texto pero no matchea palabras clave, asumimos disponible
-        return bool(text), text
+        return bool(text), text, False
 
     # Fallback: si hay botón "Agregar al carrito" hay stock
     add_to_cart = soup.find("input", {"id": "add-to-cart-button"})
     if add_to_cart:
-        return True, "Disponible (botón de compra detectado)"
+        return True, "Disponible", False
 
-    # Si hay botón "Ver opciones de compra" => existen ofertas de vendedores
-    see_options = soup.find("a", {"id": "buybox-see-all-buying-choices"}) or \
-                  soup.find("a", string=re.compile(r"ver opciones de compra|see all buying options", re.I))
-    if see_options:
-        return False, "Multi-vendedor: revisar ofertas"
+    # Preventa en botón
+    preorder_btn = soup.find("input", {"id": "add-to-cart-button-preorder"}) or \
+                   soup.find("span", {"id": "preorderButton"})
+    if preorder_btn:
+        return True, "Preventa detectada", True
 
-    return False, "Disponibilidad desconocida"
+    return False, "Desconocido", False
 
 
 def _extract_price(soup: BeautifulSoup) -> str:
@@ -296,57 +298,57 @@ def _extract_release_date(soup: BeautifulSoup) -> Optional[str]:
 
 # ─── Detección de Amazon MX en página de ofertas ──────────────────────────────
 
-def _check_amazon_mx_in_offers(asin: str) -> bool:
+def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str]]:
     """
-    Verifica si Amazon México aparece como vendedor en la página
-    de ofertas (/gp/offer-listing/ASIN).
-    Busca patrones específicos del DOM que Amazon MX utiliza.
+    Verifica vendedores en la página de ofertas.
+    Retorna (amazon_mx_presente, lista_de_vendedores).
     """
     offers_url = f"https://www.amazon.com.mx/gp/offer-listing/{asin}"
+    all_sellers = []
+    amazon_found = False
+    
     try:
         sess = get_session()
         resp = sess.get(offers_url, timeout=12)
         if resp.status_code != 200:
-            return False
+            return False, []
 
         text = resp.text
         soup = BeautifulSoup(text, "lxml")
 
         if _is_captcha(soup):
             logger.warning(f"[SCRAPER] CAPTCHA en offers page ASIN={asin}")
-            return False
+            return False, []
 
-        # Método 1: aria-label con "vendedor Amazon México" (más confiable)
-        # Ejemplo: aria-label="Agregar al carrito del vendedor Amazon México y el precio $929.00"
-        if re.search(r'vendedor\s+Amazon\s+M[eé]xico', text, re.I):
-            return True
-
-        # Método 2: Buscar el bloque de la oferta anclada (#aod-pinned-offer) o
-        # cualquier oferta (#aod-offer-list) con texto "Amazon México" sin enlace
-        # (Amazon no tiene storefront propio, aparece como texto plano)
+        # Extraer nombres de bloques de oferta
         for offer_block in soup.find_all(id=re.compile(r"aod-pinned-offer|aod-offer-\d+")):
             sold_by_div = offer_block.find(id=re.compile(r"aod-offer-sold-by|aod-pinned-offer-sold-by"))
             if sold_by_div:
-                sold_text = sold_by_div.get_text(strip=True)
-                # Amazon MX aparece como texto plano (sin enlace de storefront)
+                sold_text = sold_by_div.get_text(" ", strip=True)
+                
+                # Identificar si es Amazon México
                 if "Amazon México" in sold_text or "Amazon.com.mx" in sold_text:
-                    return True
-                # Fallback: coincidencia genérica "Amazon" sin ser un vendedor externo
-                inner_link = sold_by_div.find("a")
-                if not inner_link and re.search(r'\bAmazon\b', sold_text):
-                    return True
+                    amazon_found = True
+                    if "Amazon México" not in all_sellers:
+                        all_sellers.append("Amazon México")
+                else:
+                    # Es un vendedor externo
+                    # Amazon suele poner "Vendido por [Nombre]" o similar
+                    seller_name = sold_text.replace("Vendido por", "").replace("Sold by", "").strip()
+                    if seller_name and seller_name not in all_sellers:
+                        all_sellers.append(seller_name)
 
-        # Método 3: Buscar en el texto plano completo de la página
-        # Patrón: "Amazon México" seguido de precio o botón de compra
-        if "Amazon México" in text or "Amazon.com.mx" in text:
-            # Verificar que no sea solo en el header/footer
-            page_soup = soup.find("div", {"id": "aod-offer-list"}) or \
-                        soup.find("div", {"id": "all-offers-display"})
-            if page_soup and ("Amazon México" in page_soup.get_text() or
-                              "Amazon.com.mx" in page_soup.get_text()):
-                return True
+        # Método 1 (fallback): buscar texto literal si no se encontró en bloques
+        if not amazon_found and re.search(r'vendedor\s+Amazon\s+M[eé]xico', text, re.I):
+            amazon_found = True
+            if "Amazon México" not in all_sellers:
+                all_sellers.insert(0, "Amazon México")
 
-        return False
+        return amazon_found, all_sellers
+
+    except Exception as e:
+        logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
+        return False, []
 
     except Exception as e:
         logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
@@ -397,7 +399,7 @@ def scrape(product_name: str, url: str) -> ProductSnapshot:
         title_el = soup.find("span", {"id": "productTitle"})
         title = title_el.get_text(strip=True) if title_el else product_name
 
-        in_stock, avail_text = _extract_availability(soup)
+        in_stock, avail_text, is_preorder = _extract_availability(soup)
         price = _extract_price(soup)
         seller = _extract_seller(soup)
         release_date = _extract_release_date(soup)
@@ -405,38 +407,47 @@ def scrape(product_name: str, url: str) -> ProductSnapshot:
 
         full_text = response.text
         amazon_present = False
+        all_sellers = [seller] if seller != "Desconocido" else []
 
         # ── LÓGICA QUIRÚRGICA: VERIFICAR AMAZON MX ────────────────────────────
-        # Caso 1: El vendedor principal ya ES Amazon México
+        # Determinar si hay múltiples ofertas
+        has_multi = _has_multiple_sellers(soup, full_text)
+        
         if seller == "Amazon México":
             amazon_present = True
 
-        # Caso 2: Hay múltiples vendedores — revisar la página de ofertas
-        elif _has_multiple_sellers(soup, full_text):
-            logger.info(f"[SCRAPER] Multi-vendedor detectado en {product_name}. Verificando ofertas...")
+        if has_multi or seller == "Desconocido":
             asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
             if asin_match:
                 asin = asin_match.group(1)
-                amazon_present = _check_amazon_mx_in_offers(asin)
-                if amazon_present:
-                    logger.info(f"[SCRAPER] ✅ Amazon MX está disponible en ofertas para {product_name}")
-                    # Si Amazon está en ofertas y la página principal reporta 
-                    # "ver opciones", el producto SÍ está disponible para comprar
-                    if not in_stock:
-                        in_stock = True
-                        avail_text = "Disponible vía Amazon México (en ofertas)"
-                else:
-                    logger.info(f"[SCRAPER] ❌ Amazon MX NO aparece en las ofertas de {product_name}")
-        # ─────────────────────────────────────────────────────────────────────
+                amazon_present_offers, sellers_list = _check_amazon_mx_in_offers(asin)
+                amazon_present = amazon_present or amazon_present_offers
+                # Combinar listas de vendedores
+                for s in sellers_list:
+                    if s not in all_sellers: all_sellers.append(s)
+                
+                if amazon_present and not in_stock:
+                    in_stock = True
+                    avail_text = "Disponible vía Amazon México (en ofertas)"
+
+        # Consolidar nombre de vendedor para log
+        if not all_sellers:
+             final_seller = "Desconocido"
+        elif len(all_sellers) == 1:
+             final_seller = all_sellers[0]
+        else:
+             final_seller = f"Multi ({', '.join(all_sellers[:3])})"
 
         return ProductSnapshot(
             name=product_name, url=url,
             title=title, in_stock=in_stock,
             availability_text=avail_text, price=price,
-            seller=seller, release_date=release_date,
+            seller=final_seller, release_date=release_date,
             normalized_title=normalize_title(title),
             amazon_present=amazon_present,
-            image_url=image_url
+            image_url=image_url,
+            is_preorder=is_preorder,
+            sellers=all_sellers
         )
 
     except requests.exceptions.RequestException as e:
