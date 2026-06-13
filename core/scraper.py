@@ -179,22 +179,46 @@ def _extract_availability(soup: BeautifulSoup) -> tuple[bool, str]:
 
 
 def _extract_price(soup: BeautifulSoup) -> str:
-    """Extrae el precio del producto."""
-    # Selector moderno de Amazon
-    price_span = soup.find("span", {"class": re.compile(r"a-price-whole")})
-    if price_span:
-        fraction = soup.find("span", {"class": re.compile(r"a-price-fraction")})
-        whole = price_span.get_text(strip=True).replace(",", "")
-        frac = fraction.get_text(strip=True) if fraction else "00"
-        return f"${whole}.{frac} MXN"
+    """
+    Extrae el precio del producto restringiéndolo al área principal
+    para evitar capturar precios de recomendaciones laterales o patrocinados.
+    """
+    # Intentar buscar el precio dentro de los contenedores principales de Amazon
+    main_containers = [
+        soup.find("div", {"id": "centerCol"}),
+        soup.find("div", {"id": "corePrice_feature_div"}),
+        soup.find("div", {"id": "apex_desktop"}),
+        soup.find("div", {"id": "buybox"}),
+        soup.find("div", {"id": "mediaTab_content_landing_0"}),
+        soup.find("div", {"id": "unifiedPrice_feature_div"})
+    ]
 
-    # Fallback con id
-    price_el = soup.find("span", {"id": "priceblock_ourprice"}) or \
-               soup.find("span", {"id": "priceblock_dealprice"})
-    if price_el:
-        return price_el.get_text(strip=True)
+    for container in main_containers:
+        if not container:
+            continue
+        
+        # Selectores específicos de precio dentro del contenedor
+        # 1. Selector moderno con centavos
+        price_whole = container.find("span", {"class": "a-price-whole"})
+        if price_whole:
+            whole_txt = price_whole.get_text(strip=True).replace(",", "").replace(".", "")
+            price_fraction = container.find("span", {"class": "a-price-fraction"})
+            frac_txt = price_fraction.get_text(strip=True) if price_fraction else "00"
+            return f"${whole_txt}.{frac_txt} MXN"
 
-    return "Precio no disponible"
+        # 2. Selector offscreen (muy común)
+        offscreen = container.find("span", {"class": "a-offscreen"})
+        if offscreen:
+             txt = offscreen.get_text(strip=True)
+             if "$" in txt: return txt
+
+        # 3. Ids clásicos
+        classic = container.find("span", {"id": "priceblock_ourprice"}) or \
+                  container.find("span", {"id": "priceblock_dealprice"})
+        if classic:
+            return classic.get_text(strip=True)
+
+    return "No disponible"
 
 
 def _extract_seller(soup: BeautifulSoup) -> str:
@@ -298,30 +322,42 @@ def _extract_release_date(soup: BeautifulSoup) -> Optional[str]:
 
 # ─── Detección de Amazon MX en página de ofertas ──────────────────────────────
 
-def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str]]:
+def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str]]:
     """
     Verifica vendedores en la página de ofertas.
-    Retorna (amazon_mx_presente, lista_de_vendedores).
+    Retorna (amazon_mx_presente, lista_de_vendedores, mejor_precio).
     """
     offers_url = f"https://www.amazon.com.mx/gp/offer-listing/{asin}"
     all_sellers = []
     amazon_found = False
+    best_price = None
     
     try:
         sess = get_session()
         resp = sess.get(offers_url, timeout=12)
         if resp.status_code != 200:
-            return False, []
+            return False, [], None
 
         text = resp.text
         soup = BeautifulSoup(text, "lxml")
 
         if _is_captcha(soup):
             logger.warning(f"[SCRAPER] CAPTCHA en offers page ASIN={asin}")
-            return False, []
+            return False, [], None
 
-        # Extraer nombres de bloques de oferta
+        # Extraer nombres y precios de bloques de oferta
         for offer_block in soup.find_all(id=re.compile(r"aod-pinned-offer|aod-offer-\d+")):
+            # Extraer Precio
+            price_el = offer_block.find("span", {"class": "a-price"})
+            curr_price = None
+            if price_el:
+                offscreen = price_el.find("span", {"class": "a-offscreen"})
+                if offscreen:
+                    curr_price = offscreen.get_text(strip=True)
+                if not best_price:
+                    best_price = curr_price
+
+            # Extraer Vendedor
             sold_by_div = offer_block.find(id=re.compile(r"aod-offer-sold-by|aod-pinned-offer-sold-by"))
             if sold_by_div:
                 sold_text = sold_by_div.get_text(" ", strip=True)
@@ -331,9 +367,11 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str]]:
                     amazon_found = True
                     if "Amazon México" not in all_sellers:
                         all_sellers.append("Amazon México")
+                    # Si Amazon México tiene un precio, lo preferimos como el precio de referencia
+                    if curr_price:
+                         best_price = curr_price
                 else:
-                    # Es un vendedor externo
-                    # Amazon suele poner "Vendido por [Nombre]" o similar
+                    # Es un vendedor externo (Incluye Amazon EE.UU. como externo para filtros)
                     seller_name = sold_text.replace("Vendido por", "").replace("Sold by", "").strip()
                     if seller_name and seller_name not in all_sellers:
                         all_sellers.append(seller_name)
@@ -344,7 +382,7 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str]]:
             if "Amazon México" not in all_sellers:
                 all_sellers.insert(0, "Amazon México")
 
-        return amazon_found, all_sellers
+        return amazon_found, all_sellers, best_price
 
     except Exception as e:
         logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
@@ -420,8 +458,13 @@ def scrape(product_name: str, url: str) -> ProductSnapshot:
             asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
             if asin_match:
                 asin = asin_match.group(1)
-                amazon_present_offers, sellers_list = _check_amazon_mx_in_offers(asin)
+                amazon_present_offers, sellers_list, offers_price = _check_amazon_mx_in_offers(asin)
                 amazon_present = amazon_present or amazon_present_offers
+                
+                # Si no teníamos precio real, usar el de las ofertas
+                if (price == "No disponible" or ".." in price) and offers_price:
+                    price = offers_price
+
                 # Combinar listas de vendedores
                 for s in sellers_list:
                     if s not in all_sellers: all_sellers.append(s)
