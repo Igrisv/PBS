@@ -12,6 +12,7 @@ import random
 import threading
 from pathlib import Path
 from typing import Optional, Callable
+from concurrent.futures import ThreadPoolExecutor
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
@@ -149,10 +150,6 @@ def detect_change(
     # Caso 5: PREVENTA (Detectada ahora)
     if curr.is_preorder and (prev is None or not prev.is_preorder):
         return "preorder"
-
-    return None
-
-
 def run_monitor(
     products_path: str,
     interval_seconds: int,
@@ -160,8 +157,7 @@ def run_monitor(
     file_lock: threading.Lock = None,
     run_discovery: bool = True
 ) -> None:
-    """Bucle principal stateful con logs refinados."""
-    # Cargar datos iniciales para el resumen
+    """Bucle principal paralelo con ThreadPoolExecutor."""
     from core.discovery import DISCOVERED_FILE
     def get_discovery_count():
         if os.path.exists(DISCOVERED_FILE):
@@ -172,88 +168,98 @@ def run_monitor(
 
     products = load_products(products_path)
     snapshots = load_state()
+    state_lock = threading.Lock() # Bloqueo para snapshots y save_state
     
     logger.info(f"{'='*60}")
-    logger.info(f"🚀 POKÉMON MONITOR PROFESIONAL")
+    logger.info(f"🚀 POKÉMON MONITOR PARALELO (Turbo)")
     logger.info(f"{'='*60}")
     logger.info(f"📋 Watchlist:     {len(products)} productos activos")
     logger.info(f"🧠 Memoria:       {len(snapshots)} estados guardados")
     logger.info(f"🔎 Historial:     {get_discovery_count()} ASINs descubiertos")
-    logger.info(f"⏱️  Intervalo:     {interval_seconds}s")
+    logger.info(f"⏱️  Intervalo:     {interval_seconds if not callable(interval_seconds) else interval_seconds()}s")
     logger.info(f"📡 Discovery:     Cada {DISCOVERY_EVERY_N_CYCLES} ciclos")
     logger.info(f"{'='*60}\n")
     
     cycle = 0
     captcha_cooldown_until = 0
 
+    def process_product(product, cycle_snapshots):
+        nonlocal captcha_cooldown_until
+        if time.time() < captcha_cooldown_until:
+             return
+
+        name = product.get("name", "Desconocido")
+        url = product.get("url", "")
+        if not url: return
+        
+        # logger.info(f"  🔍 Escaneando: {name}")
+        curr = scrape(name, url)
+        
+        if curr.captcha_detected:
+            with state_lock:
+                logger.warning(f"⚠️  CAPTCHA detectado en '{name}'. Pausando monitor 5 min.")
+                captcha_cooldown_until = time.time() + 300 
+            return
+
+        if curr.error:
+            logger.error(f"  ❌ Error en '{name}': {curr.error}")
+            return
+        
+        # Logs de estado
+        status_icon = "✅" if curr.in_stock else "❌"
+        preorder_tag = " [PREVENTA]" if curr.is_preorder else ""
+        logger.info(f"  {status_icon}{preorder_tag} {curr.availability_text} | {curr.price} | Vendedor: {curr.seller} | {name}")
+        
+        if len(curr.sellers) > 1:
+            logger.info(f"    👥 Otros vendedores ({name}): {', '.join(curr.sellers[1:5])}")
+
+        should_alert, filter_reason = should_alert_for_product(product, curr)
+        
+        with state_lock:
+            prev = cycle_snapshots.get(url)
+            if should_alert:
+                change = detect_change(prev, curr)
+                if change:
+                    logger.info(f"  🚨 ALERTA INSTANTÁNEA ({name}): {change}")
+                    on_change_callback(curr, change)
+            
+            # Guardar estado hilos-seguro
+            cycle_snapshots[url] = curr
+            if file_lock:
+                with file_lock: save_state(cycle_snapshots)
+            else:
+                save_state(cycle_snapshots)
+
     while True:
         cycle += 1
         now_ts = time.time()
         now_str = time.strftime('%H:%M:%S')
         
-        # Enfriamiento si Amazon bloqueó
         if now_ts < captcha_cooldown_until:
             wait_rem = int(captcha_cooldown_until - now_ts)
-            logger.warning(f"🛑 [PAUSA CAPTCHA] Amazon bloqueado. Enfriando por {wait_rem}s...")
-            time.sleep(60)
+            logger.warning(f"🛑 [CAPTCHA] Amazon bloqueado. Esperando {wait_rem}s...")
+            time.sleep(30)
             continue
 
         discovery_in = DISCOVERY_EVERY_N_CYCLES - (cycle % DISCOVERY_EVERY_N_CYCLES)
-        discovery_status = "✨ DISCOVERY ACTIVO" if cycle % DISCOVERY_EVERY_N_CYCLES == 0 else f"📡 {discovery_in} ciclo(s) p/ Discovery"
+        discovery_status = "✨ DISCOVERY ACTIVO" if cycle % DISCOVERY_EVERY_N_CYCLES == 0 else f"📡 {discovery_in} ciclo(s)"
 
         logger.info(f"┌{'─'*58}┐")
         logger.info(f"│ CICLO #{cycle:03} | {now_str} | {discovery_status.center(28)} │")
         logger.info(f"└{'─'*58}┘")
 
-        # Cargar productos con seguridad
+        # Recargar productos
         if file_lock:
-            with file_lock: current_products = load_products(products_path)
+            with file_lock: products = load_products(products_path)
         else:
-            current_products = load_products(products_path)
+            products = load_products(products_path)
         
-        for product in current_products:
-            name = product.get("name", "Desconocido")
-            url = product.get("url", "")
-            if not url: continue
-            
-            logger.info(f"  🔍 Watchlist: {name}")
-            curr = scrape(name, url)
-            
-            if curr.captcha_detected:
-                logger.warning(f"⚠️  CAPTCHA detectado en '{name}'. Pausando todo el monitor 5 min.")
-                captcha_cooldown_until = time.time() + 300 # 5 min
-                break # Salir de la lista de productos para este ciclo
+        # DISPARAR HILOS EN PARALELO
+        # Usamos un pool pequeño (5 hilos) para no saturar a Amazon desde un mismo IP
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            executor.map(lambda p: process_product(p, snapshots), products)
 
-            if curr.error:
-                logger.error(f"  ❌ Error en '{name}': {curr.error}")
-                continue
-            
-            status_icon = "✅" if curr.in_stock else "❌"
-            preorder_tag = " [PREVENTA]" if curr.is_preorder else ""
-            logger.info(f"  {status_icon}{preorder_tag} {curr.availability_text} | {curr.price} | Vendedor: {curr.seller}")
-            if len(curr.sellers) > 1:
-                logger.info(f"    👥 Otros vendedores: {', '.join(curr.sellers[1:5])}")
-
-            should_alert, filter_reason = should_alert_for_product(product, curr)
-            if not should_alert:
-                logger.info(f"  ⏭️  Filtro de control: {filter_reason}")
-            else:
-                prev = snapshots.get(url)
-                change = detect_change(prev, curr)
-                if change:
-                    logger.info(f"  🚨 CAMBIO DETECTADO: {change}")
-                    on_change_callback(curr, change)
-
-            # Guardar con seguridad
-            snapshots[url] = curr
-            if file_lock:
-                with file_lock: save_state(snapshots)
-            else:
-                save_state(snapshots)
-
-            time.sleep(random.uniform(3, 6))
-
-        # Fase Discovery (sólo si no está deshabilitada)
+        # Fase Discovery (secuencial al final del ciclo)
         if run_discovery and cycle % DISCOVERY_EVERY_N_CYCLES == 0:
             logger.info(f"\n  🕵️  Iniciando Discovery (ciclo {cycle})...")
             try:
@@ -263,7 +269,6 @@ def run_monitor(
             except Exception as e:
                 logger.error(f"  [DISCOVERY] Error: {e}")
 
-        # Determinar intervalo (soporta int o callable)
         current_sleep = interval_seconds() if callable(interval_seconds) else interval_seconds
-        logger.info(f"\n  ⏳ Próxima revisión en {current_sleep}s...\n")
+        logger.info(f"\n  ⏳ Ciclo completado. Próxima revisión en {current_sleep}s...\n")
         time.sleep(current_sleep)
