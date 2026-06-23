@@ -276,18 +276,24 @@ def _extract_seller(soup: BeautifulSoup) -> str:
                     if c: return c
             break
 
-    # 4. Enlace directo de sellerProfileTriggerId en cualquier parte
+    # 4. Enlace directo de sellerProfileTriggerId
     link = soup.find("a", {"id": "sellerProfileTriggerId"})
     if link:
         c = clean(link.get_text(strip=True))
         if c: return c
 
-    # 5. Búsqueda en todo el HTML: «Vendido por Amazon México»
-    if re.search(r'Amazon\s*M[eé]xico|Amazon\.com\.mx', soup.get_text(" ")):
-        # Solo devolvemos Amazon México si está dentro del area de compra
-        buybox_area = soup.find(id=re.compile(r'buybox|buy-now|add-to-cart', re.I))
-        if buybox_area and re.search(r'Amazon\s*M[eé]xico|Amazon\.com\.mx', buybox_area.get_text(" ")):
-            return "Amazon México"
+    # 5. Búsqueda por aria-label (Basado en hallazgo del usuario)
+    # Ejemplo: <a aria-label="Nombre. Abre una nueva página" ...>
+    link = soup.find("a", aria_label=re.compile(r"Abre una nueva p[aá]gina|Opens a new page", re.I))
+    if link:
+        c = clean(link.get_text(strip=True))
+        if c: return c
+
+    # 6. Cualquier enlace con href de vendedor
+    link = soup.find("a", href=re.compile(r"/gp/aag/main|seller="))
+    if link:
+        c = clean(link.get_text(strip=True))
+        if c: return c
 
     return "Desconocido"
 
@@ -369,6 +375,12 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
     try:
         sess = get_session()
         resp = sess.get(offers_url, timeout=12)
+        
+        # Fallback: Si la página de ofertas estándar falla o está vacía, intentar con ?aod=1
+        if resp.status_code != 200 or "aod-offer" not in resp.text:
+            aod_url = f"https://www.amazon.com.mx/dp/{asin}/ref=olp-opf-redir?aod=1"
+            resp = sess.get(aod_url, timeout=12)
+            
         if resp.status_code != 200:
             return False, [], None
 
@@ -391,26 +403,52 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
                 if not best_price:
                     best_price = curr_price
 
-            # Extraer Vendedor
-            sold_by_div = offer_block.find(id=re.compile(r"aod-offer-sold-by|aod-pinned-offer-sold-by"))
-            if sold_by_div:
-                sold_text = sold_by_div.get_text(" ", strip=True)
+            # Extraer Vendedor — El nombre está en un <a> que apunta a /gp/aag/main
+            # Ejemplo: <a href="/gp/aag/main?...">Lia Toys Y Collectibles</a>
+            seller_link = offer_block.find("a", href=re.compile(r"/gp/aag/main"))
+            if seller_link:
+                seller_name = seller_link.get_text(strip=True)
                 
-                # Identificar si es Amazon México
-                if "Amazon México" in sold_text or "Amazon.com.mx" in sold_text:
+                if "Amazon México" in seller_name or "Amazon.com.mx" in seller_name:
                     amazon_found = True
                     if "Amazon México" not in all_sellers:
                         all_sellers.append("Amazon México")
-                    # Si Amazon México tiene un precio, lo preferimos como el precio de referencia
                     if curr_price:
-                         best_price = curr_price
-                else:
-                    # Es un vendedor externo (Incluye Amazon EE.UU. como externo para filtros)
-                    seller_name = sold_text.replace("Vendido por", "").replace("Sold by", "").strip()
-                    if seller_name and seller_name not in all_sellers:
-                        all_sellers.append(seller_name)
+                        best_price = curr_price
+                elif seller_name and seller_name not in all_sellers:
+                    # Vendedor de terceros (Lia Toys, M-20 LLC, etc.)
+                    all_sellers.append(seller_name)
+            else:
+                # Fallback: buscar por ID legacy por si acaso
+                sold_by_div = offer_block.find(id=re.compile(r"aod-offer-sold-by|aod-pinned-offer-sold-by"))
+                if sold_by_div:
+                    sold_text = sold_by_div.get_text(" ", strip=True)
+                    if "Amazon México" in sold_text or "Amazon.com.mx" in sold_text:
+                        amazon_found = True
+                        if "Amazon México" not in all_sellers:
+                            all_sellers.append("Amazon México")
+                        if curr_price:
+                            best_price = curr_price
+                    else:
+                        name = sold_text.replace("Vendido por", "").replace("Sold by", "").strip()
+                        if name and name not in all_sellers:
+                            all_sellers.append(name)
 
-        # Método 1 (fallback): buscar texto literal si no se encontró en bloques
+        # Fallback amplio: si no se encontró ningún vendedor en los bloques,
+        # escanear TODOS los enlaces /gp/aag/main en la página de ofertas
+        if not all_sellers:
+            for link in soup.find_all("a", href=re.compile(r"/gp/aag/main")):
+                name = link.get_text(strip=True)
+                if not name:
+                    continue
+                if "Amazon México" in name or "Amazon.com.mx" in name:
+                    amazon_found = True
+                    if "Amazon México" not in all_sellers:
+                        all_sellers.append("Amazon México")
+                elif name not in all_sellers:
+                    all_sellers.append(name)
+
+        # Fallback texto: buscar literal "Amazon México" en el HTML
         if not amazon_found and re.search(r'vendedor\s+Amazon\s+M[eé]xico', text, re.I):
             amazon_found = True
             if "Amazon México" not in all_sellers:
@@ -440,7 +478,7 @@ def _has_multiple_sellers(soup: BeautifulSoup, text: str) -> bool:
     return False
 
 
-def scrape(product_name: str, url: str) -> ProductSnapshot:
+def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnapshot:
     """
     Scrape una URL de Amazon MX y retorna un ProductSnapshot.
     No lanza excepciones; los errores van dentro del snapshot.
@@ -484,8 +522,16 @@ def scrape(product_name: str, url: str) -> ProductSnapshot:
         if seller == "Amazon México":
             amazon_present = True
 
-        # Consulta la página de ofertas si: hay múltiples vendedores o el vendedor es desconocido
+        # Consulta la página de ofertas si:
+        # 1. Necesitamos explícitamente a Amazon (amazon_only) y aún no lo detectamos.
+        # 2. O si el vendedor es desconocido y queremos intentar identificarlo.
+        # 3. Y siempre que haya múltiples ofertas detectadas.
         should_check_offers = has_multi or seller == "Desconocido"
+        
+        # Optimización: si no necesitamos Amazon y ya hay stock, no es crítico ver ofertas
+        if not amazon_only and in_stock:
+             should_check_offers = False
+
         if should_check_offers:
             asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
             if asin_match:
