@@ -63,7 +63,7 @@ LANGUAGE_CODE   = os.getenv("META_LANGUAGE_CODE", "es_MX")
 WHATSAPP_BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "")
 WHATSAPP_COMMUNITY  = os.getenv("WHATSAPP_COMMUNITY_ID", "")
 WHATSAPP_ASCENDED_HEROES_CHANNEL = os.getenv("WHATSAPP_ASCENDED_HEROES_CHANNEL", "")
-WEB_HOST        = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+WEB_HOST        = os.getenv("DASHBOARD_HOST", "65.75.203.137")
 WEB_PORT        = int(os.getenv("DASHBOARD_PORT", "5000"))
 
 GLOBAL_LOCK_FILE = os.path.join(BASE_DIR, "data", "app.lock")

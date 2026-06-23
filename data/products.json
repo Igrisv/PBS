@@ -37,7 +37,9 @@
   {
     "name": "Pokémon TCG: Mega Evolution—Ascended Heroes First Partners Deluxe Pin Collection (3 Tarjetas Promocionales de Aluminio, 1 Pin de Lujo y 5 Paquetes de Refuerzo",
     "url": "https://a.co/d/08gLVRnj",
-    "active": true
+    "active": true,
+    "amazon_only": true,
+    "max_price": 600.0
   },
   {
     "name": "Pokémon TCG: Mega Evolution - Ascended Heroes Collection-Erika (1 Foil Promo Card, 1 Coin & 2 Booster Packs)",
@@ -287,6 +289,13 @@
   {
     "name": "Mega Latias Ex",
     "url": "https://a.co/d/03vWAnZ6",
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes First Partners Deluxe Pin Collection (3 Tarjetas Promocionales de Aluminio, 1 Pin de Lujo y 5 Paquetes de Refuerzo",
+    "url": "https://www.amazon.com.mx/dp/B0G71VXSWN",
+    "max_price": 600.0,
+    "amazon_only": true,
     "active": true
   }
 ]

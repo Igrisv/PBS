@@ -265,7 +265,7 @@ app.get('/', (req, res) => {
 
 // ─── Arranque ────────────────────────────────────────────────────────────────
 server.listen(port, () => {
-    bridgeLog('info', `🚀 Panel web disponible en http://localhost:${port}`);
+    bridgeLog('info', `🚀 Panel web disponible en 65.75.203.137:${port}`);
 });
 
 bridgeState.status = 'connecting';
