@@ -4,5 +4,8 @@
   "fresh_window_minutes": 20,
   "warmup_period_minutes": 0,
   "amazon_email": "Roieldmusic@gmail.com",
-  "amazon_password": ""
+  "amazon_password": "",
+  "amazon_only": false,
+  "min_jitter": 1,
+  "max_jitter": 3
 }

@@ -57,13 +57,12 @@ def _parse_price(price_text: str) -> Optional[float]:
         return None
 
 
-def should_alert_for_product(product: dict, snapshot: ProductSnapshot) -> tuple[bool, str]:
+def should_alert_for_product(product: dict, snapshot: ProductSnapshot, amazon_only: bool = True) -> tuple[bool, str]:
     """Aplica filtros de precio y vendedor antes de disparar alertas.
     
-    REGLA CLAVE: Solo se alerta si Amazon México está disponible como vendedor.
-    - Si el vendedor principal ES Amazon México → OK.
-    - Si hay múltiples vendedores pero Amazon MX está en ofertas → OK (amazon_present=True).
-    - Si el vendedor es tercero y Amazon MX no aparece en ofertas → FILTRADO.
+    REGLA:
+    - Si amazon_only es True, solo se alerta si Amazon México está disponible.
+    - Si amazon_only es False, se alerta para cualquier vendedor.
     """
     max_price = product.get("max_price")
     if max_price is not None:
@@ -71,12 +70,13 @@ def should_alert_for_product(product: dict, snapshot: ProductSnapshot) -> tuple[
         if current_price is not None and current_price > float(max_price):
             return False, f"max_price={max_price} (precio actual {snapshot.price})"
 
-    # Verificar que Amazon México esté disponible como opción de compra
-    seller = (snapshot.seller or "").strip()
-    is_amazon_mx = seller == "Amazon México" or snapshot.amazon_present
+    if amazon_only:
+        # Verificar que Amazon México esté disponible como opción de compra
+        seller = (snapshot.seller or "").strip()
+        is_amazon_mx = seller == "Amazon México" or snapshot.amazon_present
 
-    if not is_amazon_mx:
-        return False, f"Amazon MX no disponible (vendedor: {seller or 'Desconocido'})"
+        if not is_amazon_mx:
+            return False, f"Amazon MX no disponible (vendedor: {seller or 'Desconocido'})"
 
     return True, "ok"
 
@@ -183,17 +183,23 @@ def run_monitor(
     cycle = 0
     captcha_cooldown_until = 0
 
-    def process_product(product, cycle_snapshots):
+    def process_product(product, cycle_snapshots, config):
         nonlocal captcha_cooldown_until
         if time.time() < captcha_cooldown_until:
              return
+
+        # Aplicar Jitter para evitar ráfagas de peticiones desde el mismo IP
+        min_j = config.get("min_jitter", 1)
+        max_j = config.get("max_jitter", 3)
+        time.sleep(random.uniform(min_j, max_j))
 
         name = product.get("name", "Desconocido")
         url = product.get("url", "")
         if not url: return
         
-        # logger.info(f"  🔍 Escaneando: {name}")
-        curr = scrape(name, url)
+        # Pasar preferencia de Amazon Only al scraper para optimizar peticiones
+        amazon_only = config.get("amazon_only", False)
+        curr = scrape(name, url, amazon_only=amazon_only)
         
         if curr.captcha_detected:
             with state_lock:
@@ -213,7 +219,7 @@ def run_monitor(
         if len(curr.sellers) > 1:
             logger.info(f"    👥 Otros vendedores ({name}): {', '.join(curr.sellers[1:5])}")
 
-        should_alert, filter_reason = should_alert_for_product(product, curr)
+        should_alert, filter_reason = should_alert_for_product(product, curr, amazon_only=amazon_only)
         
         with state_lock:
             prev = cycle_snapshots.get(url)
@@ -222,6 +228,10 @@ def run_monitor(
                 if change:
                     logger.info(f"  🚨 ALERTA INSTANTÁNEA ({name}): {change}")
                     on_change_callback(curr, change)
+            else:
+                # Opcional: log de por qué se filtró si estaba en stock
+                if curr.in_stock:
+                    logger.info(f"    [FILTRADO] {name}: {filter_reason}")
             
             # Guardar estado hilos-seguro
             cycle_snapshots[url] = curr
@@ -254,10 +264,15 @@ def run_monitor(
         else:
             products = load_products(products_path)
         
+        # Cargar configuración operativa dinámicamente
+        from core.admin_hub import get_notif_config
+        OP_CONFIG_PATH = os.path.join(BASE_DIR, "data", "operational_config.json")
+        op_cfg = get_notif_config(OP_CONFIG_PATH)
+
         # DISPARAR HILOS EN PARALELO
         # Usamos un pool pequeño (5 hilos) para no saturar a Amazon desde un mismo IP
         with ThreadPoolExecutor(max_workers=5) as executor:
-            executor.map(lambda p: process_product(p, snapshots), products)
+            executor.map(lambda p: process_product(p, snapshots, op_cfg), products)
 
         # Fase Discovery (secuencial al final del ciclo)
         if run_discovery and cycle % DISCOVERY_EVERY_N_CYCLES == 0:
