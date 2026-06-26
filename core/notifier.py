@@ -31,6 +31,7 @@ def send_whatsapp_alert(
     template_name: str = "inventory_update",  # Nombre de la plantilla aprobada en Meta
     language_code: str = "es_MX",        # Idioma exacto de la plantilla
     use_button: bool = True,             # Desactivar si la plantilla NO tiene botón
+    seller: str = None
 ) -> bool:
     """
     Envía un mensaje de WhatsApp via Meta Cloud API usando una plantilla.
@@ -47,10 +48,14 @@ def send_whatsapp_alert(
     }
 
     # Parámetros del Body ({{1}}, {{2}}, {{3}}, {{4}})
+    price_str = price
+    if seller and seller.lower() != "amazon méxico":
+        price_str = f"{price} (por {seller[:15]})"
+
     body_params = [
         {"type": "text", "text": product_name[:30]},       # Nombre
         {"type": "text", "text": availability_text[:15]}, # Estado
-        {"type": "text", "text": price},                  # Precio
+        {"type": "text", "text": price_str[:30]},         # Precio + Vendedor
         {"type": "text", "text": product_url}             # URL
     ]
 
@@ -140,7 +145,8 @@ def send_whatsapp_bridge_alert(
     availability_text: str,
     price: str,
     change_type: str,
-    image_url: str = None
+    image_url: str = None,
+    seller: str = None
 ) -> bool:
     """Envía una alerta de producto usando el Bridge con plantillas configurables."""
     from core.notifier_telegram import get_templates
@@ -151,7 +157,8 @@ def send_whatsapp_bridge_alert(
         "restock": tpls.get("header_restock"),
         "new_launch": tpls.get("header_new"),
         "price_change": tpls.get("header_price"),
-        "preorder": tpls.get("header_preorder")
+        "preorder": tpls.get("header_preorder"),
+        "released": "🎉 *¡YA DISPONIBLE! (Fuera de Preventa)*"
     }
     
     def to_md(txt):
@@ -168,8 +175,11 @@ def send_whatsapp_bridge_alert(
         f"{header}\n\n"
         f"{l_prod} {product_name}\n"
         f"{l_stat} {availability_text}\n"
-        f"{l_pric} {price}\n\n"
+        f"{l_pric} {price}\n"
     )
+    if seller and seller.lower() != "amazon méxico":
+        msg += f"🤝 *Vendedor:* {seller}\n"
+    msg += "\n"
 
     if tpls.get("show_footer", True):
         msg += f"🛒 *{f_text}:* {product_url}"

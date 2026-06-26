@@ -7,6 +7,26 @@
     <base href="{{ '/' if not base_path else '/' + base_path + '/' }}">
     <link rel="stylesheet" href="static/style.css">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <style>
+        .captcha-alert { background: #ef4444; color: #fff; padding: 12px; text-align: center; font-weight: bold; display: none; margin-bottom: 15px; border-radius: 8px;}
+        .captcha-alert.show { display: block; }
+        .system-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; margin-top: 20px; }
+        .sys-card { background: #1e1e2d; padding: 20px; border-radius: 8px; border: 1px solid #333; }
+        .sys-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .sys-name { font-size: 1.2rem; font-weight: 700; text-transform: capitalize; }
+        .sys-status { font-size: 0.9rem; padding: 4px 8px; border-radius: 4px; font-weight: 600; }
+        .sys-status.online { background: rgba(74, 222, 128, 0.2); color: #4ade80; }
+        .sys-status.stopped { background: rgba(248, 113, 113, 0.2); color: #f87171; }
+        .sys-status.errored { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .sys-status.unknown { background: rgba(156, 163, 175, 0.2); color: #9ca3af; }
+        .sys-metrics { font-size: 0.9rem; color: #aaa; margin-bottom: 15px; }
+        .sys-actions { display: flex; gap: 8px; }
+        .sys-btn { flex: 1; padding: 8px; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; color: #fff; transition: opacity 0.2s; }
+        .sys-btn:hover { opacity: 0.8; }
+        .sys-btn.start { background: #10b981; }
+        .sys-btn.stop { background: #ef4444; }
+        .sys-btn.restart { background: #3b82f6; }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -16,6 +36,11 @@
             <span id="sub-icon">⏳</span>
             <span id="sub-text">Verificando suscripción...</span>
             <span id="sub-plan" class="sub-plan-badge"></span>
+        </div>
+
+        <!-- CAPTCHA Alert -->
+        <div id="captcha-alert" class="captcha-alert">
+            ⚠️ ALERTA GLOBAL: CAPTCHA DETECTADO. El bot está bloqueado por Amazon.
         </div>
 
         <!-- Header -->
@@ -51,6 +76,7 @@
             <button class="tab-btn active" onclick="switchTab('watchlist')">🔍 Watchlist</button>
             <button class="tab-btn" onclick="switchTab('realtime')">⚡ Estado Real</button>
             <button class="tab-btn" onclick="switchTab('discovery')">✨ Discoveries</button>
+            <button class="tab-btn" onclick="switchTab('system')">⚙️ Sistema</button>
         </div>
 
         <!-- TAB: Watchlist Control -->
@@ -68,6 +94,7 @@
                 <table>
                     <thead>
                         <tr>
+                            <th style="width:64px"></th>
                             <th>Nombre</th>
                             <th>Estado</th>
                             <th>Acciones</th>
@@ -105,6 +132,17 @@
             </div>
         </div>
 
+        <!-- TAB: System -->
+        <div id="tab-system" class="tab-content">
+            <div class="section-card">
+                <h2 class="section-title">⚙️ Sistema y PM2</h2>
+                <p class="section-desc">Controla los procesos en segundo plano de este servidor.</p>
+                <div id="system-grid" class="system-grid">
+                    <div class="empty-state">Cargando estado del sistema...</div>
+                </div>
+            </div>
+        </div>
+
     </div><!-- /container -->
 
     <script>
@@ -114,7 +152,7 @@
 
     // ── Tab Switching ─────────────────────────────────────────────────────────
     function switchTab(name) {
-        const tabs = ['watchlist','realtime','discovery'];
+        const tabs = ['watchlist','realtime','discovery','system'];
         document.querySelectorAll('.tab-btn').forEach((b, i) => {
             b.classList.toggle('active', tabs[i] === name);
         });
@@ -172,7 +210,7 @@
             const tr = document.createElement('tr');
             if (editingIndex === i) {
                 tr.innerHTML = `
-                    <td colspan="2">
+                    <td colspan="3">
                         <div class="edit-row">
                             <input type="text" id="edit-name-${i}" value="${escapeHtml(p.name)}" placeholder="Nombre">
                             <input type="text" id="edit-url-${i}" value="${escapeHtml(p.url)}" placeholder="URL">
@@ -186,9 +224,22 @@
                     </td>`;
             } else {
                 const activeIcon = p.active !== false ? '🟢' : '🔴';
+                const imgSrc = p.image_url || '';
+                const thumbHtml = imgSrc
+                    ? `<img src="${escapeHtml(imgSrc)}" class="wl-thumb" loading="lazy" alt="" onerror="this.style.display='none'">`
+                    : `<div class="wl-thumb-placeholder">?</div>`;
+                const stockBadge = p.last_in_stock === true
+                    ? `<span class="mini-badge mini-stock">EN STOCK</span>`
+                    : p.last_in_stock === false
+                    ? `<span class="mini-badge mini-empty">AGOTADO</span>`
+                    : '';
+                const sellerTag = p.last_seller && p.last_seller !== 'Desconocido'
+                    ? `<span class="mini-seller">${escapeHtml(p.last_seller)}</span>` : '';
                 tr.innerHTML = `
+                    <td class="wl-img-cell">${thumbHtml}</td>
                     <td>
                         <a href="${escapeHtml(p.url)}" target="_blank" class="product-link">${escapeHtml(p.name)}</a>
+                        <div class="meta-small">${stockBadge} ${sellerTag} ${p.last_price ? escapeHtml(p.last_price) : ''}</div>
                     </td>
                     <td><span class="active-badge">${activeIcon} ${p.active !== false ? 'Activo' : 'Pausado'}</span>
                         <div class="meta-small">Max: ${p.max_price || 'N/D'} • ${p.amazon_only ? 'Amazon only' : 'Any seller'}</div>
@@ -377,6 +428,69 @@
         fetchProducts();
         fetchSnapshots();
         fetchDiscovery();
+        fetchSystem();
+    }
+
+    // ── System ─────────────────────────────────────────────────────────────
+    async function fetchSystem() {
+        try {
+            const res = await fetch('api/system/status');
+            const data = await res.json();
+            
+            // CAPTCHA Alert
+            const alertEl = document.getElementById('captcha-alert');
+            if (data.captcha_active) {
+                alertEl.classList.add('show');
+            } else {
+                alertEl.classList.remove('show');
+            }
+
+            // PM2 Processes
+            const grid = document.getElementById('system-grid');
+            if (!data.processes || data.processes.length === 0) {
+                grid.innerHTML = '<div class="empty-state">No se encontraron procesos (pm2 jlist falló o vacío).</div>';
+                return;
+            }
+
+            grid.innerHTML = data.processes.map(p => {
+                const statusClass = p.status === 'online' ? 'online' : (p.status === 'stopped' ? 'stopped' : 'unknown');
+                const memMB = (p.memory / 1024 / 1024).toFixed(1);
+                return `
+                <div class="sys-card">
+                    <div class="sys-header">
+                        <span class="sys-name">${escapeHtml(p.name)}</span>
+                        <span class="sys-status ${statusClass}">${escapeHtml(p.status.toUpperCase())}</span>
+                    </div>
+                    <div class="sys-metrics">
+                        CPU: ${p.cpu}% &bull; Mem: ${memMB} MB
+                    </div>
+                    <div class="sys-actions">
+                        <button class="sys-btn start" onclick="systemAction('${escapeHtml(p.name)}', 'start')" ${p.status === 'online' ? 'disabled style="opacity:0.5"' : ''}>▶️ Iniciar</button>
+                        <button class="sys-btn stop" onclick="systemAction('${escapeHtml(p.name)}', 'stop')" ${p.status !== 'online' ? 'disabled style="opacity:0.5"' : ''}>⏸️ Detener</button>
+                        <button class="sys-btn restart" onclick="systemAction('${escapeHtml(p.name)}', 'restart')">🔄 Reiniciar</button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        } catch (e) {
+            console.error('Error fetching system status', e);
+        }
+    }
+
+    async function systemAction(name, action) {
+        if (!confirm(`¿${action.toUpperCase()} el proceso "${name}"?`)) return;
+        try {
+            const res = await fetch(`api/system/process/${name}/${action}`, { method: 'POST' });
+            if (res.ok) {
+                alert(`✅ Comando enviado.`);
+                setTimeout(refresh, 1000);
+            } else {
+                const d = await res.json();
+                alert('❌ Error: ' + (d.error || 'Fallo al ejecutar'));
+            }
+        } catch (e) {
+            alert('❌ Error de red');
+        }
     }
 
 

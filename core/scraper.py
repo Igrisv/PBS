@@ -14,21 +14,29 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+from urllib.parse import urlparse, urlunparse, urlencode, parse_qs
 
-import requests
-from bs4 import BeautifulSoup
+from scrapling.fetchers import Fetcher, StealthyFetcher
+from scrapling.engines.toolbelt.proxy_rotation import ProxyRotator
+
+# StealthyFetcher usa un navegador real (Camoufox/Firefox) con anti-fingerprinting
+# Es más lento pero prácticamente indetectable por Amazon
+_USE_STEALTH = True  # Cambiar a False para volver al modo HTTP simple
+
+# Dominios de tracking/analytics que Amazon carga pero son innecesarios para el scraping
+_BLOCKED_DOMAINS = {
+    "amazon-adsystem.com", "doubleclick.net", "googlesyndication.com",
+    "googletagmanager.com", "google-analytics.com", "adservice.google.com",
+    "omtrdc.net", "assoc-amazon.com", "images-na.ssl-images-amazon.com",
+    "images-amazon.com", "ssl-images-amazon.com"
+}
 
 logger = logging.getLogger(__name__)
 
-# ─── User-Agents reales para rotar y evitar bloqueos ─────────────────────────
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
-]
+def css_first(node, selector):
+    res = node.css(selector)
+    return res[0] if res else None
+
 
 
 @dataclass
@@ -48,6 +56,7 @@ class ProductSnapshot:
     image_url: Optional[str] = None # URL de la imagen del producto
     is_preorder: bool = False     # True si el producto está en preventa
     sellers: list[str] = field(default_factory=list) # Lista de vendedores encontrados
+    bytes_downloaded: int = 0     # Ancho de banda consumido en bytes
 
 # ─── Configuración de Proxies ────────────────────────────────────────────────
 PROXIES_FILE = Path(__file__).resolve().parent.parent / "data" / "proxies.txt"
@@ -67,36 +76,82 @@ def _load_proxies():
 
 # Carga inicial
 _load_proxies()
+_proxy_rotator = None
+
+def _get_proxy_rotator():
+    """Crea o retorna el ProxyRotator de Scrapling para rotación nativa."""
+    global _proxy_rotator
+    if _all_proxies and _proxy_rotator is None:
+        try:
+            _proxy_rotator = ProxyRotator(_all_proxies)
+            logger.info(f"[SCRAPER] ProxyRotator inicializado con {len(_all_proxies)} proxies")
+        except Exception as e:
+            logger.warning(f"[SCRAPER] ProxyRotator no disponible: {e}")
+    return _proxy_rotator
 
 # ─── Sesión Global para Anti-Bot ─────────────────────────────────────────────
-_current_session = None
-_current_ua = None
 _current_proxy = None
 
-def get_session() -> requests.Session:
-    global _current_session, _current_ua, _current_proxy
-    if _current_session is None:
-        _current_session = requests.Session()
-        _current_ua = random.choice(USER_AGENTS)
-        _current_session.headers.update(_build_headers(_current_ua))
-        
-        if _all_proxies:
-            _current_proxy = random.choice(_all_proxies)
-            _current_session.proxies = {
-                "http": _current_proxy,
-                "https": _current_proxy
-            }
-            logger.info(f"[SCRAPER] Nueva sesión con proxy: {_current_proxy}")
-        else:
-            _current_proxy = None
+def clean_amazon_url(url: str) -> str:
+    """
+    Limpia una URL de Amazon conservando solo el ASIN.
+    Elimina ref=, social_share=, y cualquier otro parámetro que delate automatización.
+    """
+    if not url:
+        return url
+    # Extraer ASIN directamente
+    asin_match = re.search(r'/dp/([A-Z0-9]{10})', url)
+    if asin_match:
+        asin = asin_match.group(1)
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}/dp/{asin}"
+    return url
 
-    return _current_session
+def get_page(url: str):
+    """
+    Obtiene una página usando StealthyFetcher con optimizaciones de ancho de banda:
+    - disable_resources: bloquea imágenes, CSS, fuentes y media (ahorra ~80% de ancho de banda)
+    - blocked_domains: bloquea tracking y analytics
+    - block_ads: bloquea publicidad
+    """
+    # Siempre limpiar la URL antes de hacer la petición
+    url = clean_amazon_url(url)
+    proxy = random.choice(_all_proxies) if _all_proxies else None
+    
+    if _USE_STEALTH:
+        try:
+            return StealthyFetcher.fetch(
+                url,
+                proxy=proxy,
+                headless=True,
+                network_idle=False,
+                disable_resources=True,   # ⭐ Bloquea imágenes/CSS/fuentes/media
+                block_ads=True,           # ⭐ Bloquea publicidad
+                blocked_domains=_BLOCKED_DOMAINS,  # ⭐ Bloquea tracking de Amazon
+                timeout=30000,
+            )
+        except Exception as e:
+            logger.warning(f"[SCRAPER] StealthyFetcher falló, usando Fetcher HTTP: {e}")
+    
+    # Fallback: HTTP simple
+    if proxy:
+        logger.debug(f"[SCRAPER] Usando proxy HTTP: {proxy[:30]}...")
+    return Fetcher.get(url, proxy=proxy, impersonate="chrome", timeout=15)
+
+def get_page_size(page) -> int:
+    """Calcula el tamaño en bytes de la página descargada."""
+    try:
+        if hasattr(page, 'body') and page.body:
+            return len(page.body)
+        elif hasattr(page, 'text') and page.text:
+            return len(page.text.encode('utf-8', errors='ignore'))
+    except:
+        pass
+    return 0
 
 def rotate_session() -> None:
-    global _current_session, _current_proxy
-    logger.info("[SCRAPER] Rotando sesión HTTP, User-Agent y Proxy por prevención...")
-    _current_session = None
-    _current_proxy = None
+    # Con proxy rotativo, no hay nada que hacer manualmente — el proveedor rota el IP
+    logger.info("[SCRAPER] Rotación de proxy delegada al proveedor.")
 
 def normalize_title(title: str) -> str:
     """Normaliza un título para evitar duplicados por tildes, mayúsculas o espacios."""
@@ -106,45 +161,22 @@ def normalize_title(title: str) -> str:
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     return " ".join(text.split())
 
-
-
-def _build_headers(ua: Optional[str] = None) -> dict:
-    if not ua: ua = random.choice(USER_AGENTS)
-    return {
-        "User-Agent": ua,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "es-MX,es;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-    }
-
-
-def _is_captcha(soup: BeautifulSoup) -> bool:
+def _is_captcha(page) -> bool:
     """Detecta si Amazon devolvió una página de CAPTCHA."""
-    title = soup.find("title")
+    title = css_first(page, "title")
     if title and "robot" in title.text.lower():
         return True
-    if soup.find("form", {"action": "/errors/validateCaptcha"}):
+    if css_first(page, "form[action='/errors/validateCaptcha']"):
         return True
     return False
 
-
-def _extract_availability(soup: BeautifulSoup) -> tuple[bool, str]:
+def _extract_availability(page) -> tuple[bool, str]:
     """Retorna (in_stock, availability_text)."""
     # Selector principal de disponibilidad
-    avail_div = soup.find("div", {"id": "availability"})
+    avail_div = css_first(page, "#availability")
     if avail_div:
-        span = avail_div.find("span")
-        text = span.get_text(strip=True) if span else avail_div.get_text(strip=True)
+        span = css_first(avail_div, "span")
+        text = span.text.strip() if span else avail_div.text.strip()
         text_lower = text.lower()
 
         out_of_stock_keywords = ["agotado", "no disponible", "currently unavailable",
@@ -165,63 +197,61 @@ def _extract_availability(soup: BeautifulSoup) -> tuple[bool, str]:
         return bool(text), text, False
 
     # Fallback: si hay botón "Agregar al carrito" hay stock
-    add_to_cart = soup.find("input", {"id": "add-to-cart-button"})
+    add_to_cart = css_first(page, "input#add-to-cart-button")
     if add_to_cart:
         return True, "Disponible", False
 
     # Preventa en botón
-    preorder_btn = soup.find("input", {"id": "add-to-cart-button-preorder"}) or \
-                   soup.find("span", {"id": "preorderButton"})
+    preorder_btn = css_first(page, "input#add-to-cart-button-preorder") or \
+                   css_first(page, "span#preorderButton")
     if preorder_btn:
         return True, "Preventa detectada", True
 
     return False, "Desconocido", False
 
 
-def _extract_price(soup: BeautifulSoup) -> str:
+def _extract_price(page) -> str:
     """
     Extrae el precio del producto restringiéndolo al área principal
     para evitar capturar precios de recomendaciones laterales o patrocinados.
     """
-    # Intentar buscar el precio dentro de los contenedores principales de Amazon
     main_containers = [
-        soup.find("div", {"id": "centerCol"}),
-        soup.find("div", {"id": "corePrice_feature_div"}),
-        soup.find("div", {"id": "apex_desktop"}),
-        soup.find("div", {"id": "buybox"}),
-        soup.find("div", {"id": "mediaTab_content_landing_0"}),
-        soup.find("div", {"id": "unifiedPrice_feature_div"})
+        css_first(page, "#centerCol"),
+        css_first(page, "#corePrice_feature_div"),
+        css_first(page, "#apex_desktop"),
+        css_first(page, "#buybox"),
+        css_first(page, "#mediaTab_content_landing_0"),
+        css_first(page, "#unifiedPrice_feature_div")
     ]
 
     for container in main_containers:
         if not container:
             continue
         
-        # Selectores específicos de precio dentro del contenedor
         # 1. Selector moderno con centavos
-        price_whole = container.find("span", {"class": "a-price-whole"})
+        price_whole = css_first(container, "span.a-price-whole")
         if price_whole:
-            whole_txt = price_whole.get_text(strip=True).replace(",", "").replace(".", "")
-            price_fraction = container.find("span", {"class": "a-price-fraction"})
-            frac_txt = price_fraction.get_text(strip=True) if price_fraction else "00"
+            whole_txt = price_whole.text.strip().replace(",", "").replace(".", "")
+            price_fraction = css_first(container, "span.a-price-fraction")
+            frac_txt = price_fraction.text.strip() if price_fraction else "00"
             return f"${whole_txt}.{frac_txt} MXN"
 
         # 2. Selector offscreen (muy común)
-        offscreen = container.find("span", {"class": "a-offscreen"})
+        offscreen = css_first(container, "span.a-offscreen")
         if offscreen:
-             txt = offscreen.get_text(strip=True)
+             txt = offscreen.text.strip()
              if "$" in txt: return txt
 
         # 3. Ids clásicos
-        classic = container.find("span", {"id": "priceblock_ourprice"}) or \
-                  container.find("span", {"id": "priceblock_dealprice"})
+        classic = css_first(container, "span#priceblock_ourprice") or \
+                  css_first(container, "span#priceblock_dealprice")
         if classic:
-            return classic.get_text(strip=True)
+            return classic.text.strip()
 
     return "No disponible"
 
 
-def _extract_seller(soup: BeautifulSoup) -> str:
+def _extract_seller(page) -> str:
     """
     Extrae el nombre del vendedor principal de la página.
     Cubre múltiples layouts de Amazon MX: tabular buybox, merchant-info,
@@ -237,80 +267,95 @@ def _extract_seller(soup: BeautifulSoup) -> str:
         return txt if len(txt) > 1 else ""
 
     # 1. tabular-buybox (layout más común en Amazon MX)
-    tabular = soup.find("div", {"id": "tabular-buybox"})
+    tabular = css_first(page, "#tabular-buybox")
     if tabular:
-        txt = tabular.get_text(" ", strip=True)
+        txt = " ".join(tabular.text.split())
         if "Amazon México" in txt:
             return "Amazon México"
 
     # 2. merchant-info (buybox compacto)
-    mi = soup.find("div", {"id": "merchant-info"})
+    mi = css_first(page, "#merchant-info")
     if mi:
-        txt = mi.get_text(" ", strip=True)
+        txt = " ".join(mi.text.split())
         if "Amazon México" in txt or "Amazon.com.mx" in txt:
             return "Amazon México"
-        link = mi.find("a", {"id": "sellerProfileTriggerId"})
+        link = css_first(mi, "a#sellerProfileTriggerId")
         if link:
-            c = clean(link.get_text(strip=True))
+            c = clean(link.text.strip())
             if c: return c
         c = clean(txt)
         if c: return c
 
     # 3. desktop buybox nuevo (apex_desktop / coreBuyboxGroup)
-    for box_id in ["apex_desktop", "coreBuyboxGroup", "desktop_buybox_feature_div"]:
-        box = soup.find(id=box_id)
+    for box_id in ["#apex_desktop", "#coreBuyboxGroup", "#desktop_buybox_feature_div"]:
+        box = css_first(page, box_id)
         if box:
-            txt = box.get_text(" ", strip=True)
+            txt = " ".join(box.text.split())
             if "Amazon México" in txt or "Amazon.com.mx" in txt:
                 return "Amazon México"
             # Buscar enlace de vendedor dentro del box
-            link = box.find("a", {"id": "sellerProfileTriggerId"})
+            link = css_first(box, "a#sellerProfileTriggerId")
             if link:
-                c = clean(link.get_text(strip=True))
+                c = clean(link.text.strip())
                 if c: return c
             # Buscar spans con texto cercano a "Vendido por"
-            for span in box.find_all("span"):
-                span_txt = span.get_text(strip=True)
+            for span in box.css("span"):
+                span_txt = span.text.strip()
                 if "Vendido por" in span_txt or "Sold by" in span_txt:
                     c = clean(span_txt)
                     if c: return c
             break
 
+    # 4. offerDisplayFeatures_desktop (nuevo layout ODF)
+    for sel in ["div[data-csa-c-content-id='desktop-merchant-info']", 
+                "span.offer-display-feature-text-message",
+                "a[data-csa-c-content-id='odf-desktop-merchant-info']"]:
+        odf = css_first(page, sel)
+        if odf:
+            txt = " ".join(odf.text.split())
+            if "Amazon México" in txt or "Amazon.com.mx" in txt:
+                return "Amazon México"
+            # Tratar de aislar el nombre si hay "Remitente / Vendedor"
+            lines = [x.strip() for x in txt.split("Remitente / Vendedor") if x.strip()]
+            if lines:
+                c = clean(lines[-1])
+                if c: return c
+            c = clean(txt)
+            if c: return c
+
     # 4. Enlace directo de sellerProfileTriggerId
-    link = soup.find("a", {"id": "sellerProfileTriggerId"})
+    link = css_first(page, "a#sellerProfileTriggerId")
     if link:
-        c = clean(link.get_text(strip=True))
+        c = clean(link.text.strip())
         if c: return c
 
     # 5. Búsqueda por aria-label (Basado en hallazgo del usuario)
-    # Ejemplo: <a aria-label="Nombre. Abre una nueva página" ...>
-    link = soup.find("a", aria_label=re.compile(r"Abre una nueva p[aá]gina|Opens a new page", re.I))
+    link = css_first(page, "a[aria-label~='Abre'], a[aria-label~='Opens']")
     if link:
-        c = clean(link.get_text(strip=True))
+        c = clean(link.text.strip())
         if c: return c
 
     # 6. Cualquier enlace con href de vendedor
-    link = soup.find("a", href=re.compile(r"/gp/aag/main|seller="))
+    link = css_first(page, "a[href*='/gp/aag/main'], a[href*='seller=']")
     if link:
-        c = clean(link.get_text(strip=True))
+        c = clean(link.text.strip())
         if c: return c
 
     return "Desconocido"
 
 
-def _extract_image_url(soup: BeautifulSoup) -> Optional[str]:
+def _extract_image_url(page) -> Optional[str]:
     """Extrae la URL de la imagen principal del producto."""
-    img = soup.find("img", {"id": "landingImage"}) or \
-          soup.find("img", {"id": "main-image"}) or \
-          soup.find("img", {"class": "a-dynamic-image"})
+    img = css_first(page, "img#landingImage") or \
+          css_first(page, "img#main-image") or \
+          css_first(page, "img.a-dynamic-image")
     
     if img:
-        # Amazon suele poner la imagen de alta resolución en data-old-hires o en el src
-        return img.get("data-old-hires") or img.get("src")
+        return img.attrib.get("data-old-hires") or img.attrib.get("src")
     return None
 
 
-def _extract_release_date(soup: BeautifulSoup) -> Optional[str]:
+def _extract_release_date(page) -> Optional[str]:
     """
     Extrae 'Fecha de lanzamiento' de la página de Amazon.
     Retorna una fecha en formato 'YYYY-MM-DD' o None si no se encuentra.
@@ -336,24 +381,24 @@ def _extract_release_date(soup: BeautifulSoup) -> Optional[str]:
 
     keywords = ["fecha de lanzamiento", "fecha en que estuvo disponible", "available since"]
 
-    bullets_div = soup.find("div", {"id": "detailBullets_feature_div"})
+    bullets_div = css_first(page, "#detailBullets_feature_div")
     if bullets_div:
-        for li in bullets_div.find_all("li"):
-            text = li.get_text(" ", strip=True).lower()
+        for li in bullets_div.css("li"):
+            text = " ".join(li.text.split()).lower()
             if any(k in text for k in keywords):
-                date = parse_date(li.get_text(" ", strip=True))
+                date = parse_date(" ".join(li.text.split()))
                 if date:
                     return date
 
-    for table_id in ["productDetails_techSpec_section_1", "productDetails_detailBullets_sections1"]:
-        table = soup.find("table", {"id": table_id})
+    for table_id in ["#productDetails_techSpec_section_1", "#productDetails_detailBullets_sections1"]:
+        table = css_first(page, table_id)
         if table:
-            for row in table.find_all("tr"):
-                header = row.find("th")
-                value = row.find("td")
+            for row in table.css("tr"):
+                header = css_first(row, "th")
+                value = css_first(row, "td")
                 if header and value:
-                    if any(k in header.get_text(strip=True).lower() for k in keywords):
-                        date = parse_date(value.get_text(strip=True))
+                    if any(k in header.text.strip().lower() for k in keywords):
+                        date = parse_date(value.text.strip())
                         if date:
                             return date
 
@@ -362,52 +407,50 @@ def _extract_release_date(soup: BeautifulSoup) -> Optional[str]:
 
 # ─── Detección de Amazon MX en página de ofertas ──────────────────────────────
 
-def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str]]:
+def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str], int]:
     """
     Verifica vendedores en la página de ofertas.
-    Retorna (amazon_mx_presente, lista_de_vendedores, mejor_precio).
+    Retorna (amazon_mx_presente, lista_de_vendedores, mejor_precio, bytes_descargados).
     """
     offers_url = f"https://www.amazon.com.mx/gp/offer-listing/{asin}"
     all_sellers = []
     amazon_found = False
     best_price = None
+    bytes_downloaded = 0
     
     try:
-        sess = get_session()
-        resp = sess.get(offers_url, timeout=12)
+        page = get_page(offers_url)
+        bytes_downloaded += get_page_size(page)
         
         # Fallback: Si la página de ofertas estándar falla o está vacía, intentar con ?aod=1
-        if resp.status_code != 200 or "aod-offer" not in resp.text:
+        if page.status != 200 or "aod-offer" not in page.text:
             aod_url = f"https://www.amazon.com.mx/dp/{asin}/ref=olp-opf-redir?aod=1"
-            resp = sess.get(aod_url, timeout=12)
+            page = get_page(aod_url)
+            bytes_downloaded += get_page_size(page)
             
-        if resp.status_code != 200:
-            return False, [], None
+        if page.status != 200:
+            return False, [], None, bytes_downloaded
 
-        text = resp.text
-        soup = BeautifulSoup(text, "lxml")
-
-        if _is_captcha(soup):
+        if _is_captcha(page):
             logger.warning(f"[SCRAPER] CAPTCHA en offers page ASIN={asin}")
-            return False, [], None
+            return False, [], None, bytes_downloaded
 
         # Extraer nombres y precios de bloques de oferta
-        for offer_block in soup.find_all(id=re.compile(r"aod-pinned-offer|aod-offer-\d+")):
+        for offer_block in page.css("div[id^='aod-pinned-offer'], div[id^='aod-offer-']"):
             # Extraer Precio
-            price_el = offer_block.find("span", {"class": "a-price"})
+            price_el = css_first(offer_block, "span.a-price")
             curr_price = None
             if price_el:
-                offscreen = price_el.find("span", {"class": "a-offscreen"})
+                offscreen = css_first(price_el, "span.a-offscreen")
                 if offscreen:
-                    curr_price = offscreen.get_text(strip=True)
+                    curr_price = offscreen.text.strip()
                 if not best_price:
                     best_price = curr_price
 
             # Extraer Vendedor — El nombre está en un <a> que apunta a /gp/aag/main
-            # Ejemplo: <a href="/gp/aag/main?...">Lia Toys Y Collectibles</a>
-            seller_link = offer_block.find("a", href=re.compile(r"/gp/aag/main"))
+            seller_link = css_first(offer_block, "a[href*='/gp/aag/main']")
             if seller_link:
-                seller_name = seller_link.get_text(strip=True)
+                seller_name = seller_link.text.strip()
                 
                 if "Amazon México" in seller_name or "Amazon.com.mx" in seller_name:
                     amazon_found = True
@@ -420,9 +463,9 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
                     all_sellers.append(seller_name)
             else:
                 # Fallback: buscar por ID legacy por si acaso
-                sold_by_div = offer_block.find(id=re.compile(r"aod-offer-sold-by|aod-pinned-offer-sold-by"))
+                sold_by_div = css_first(offer_block, "div[id*='aod-offer-sold-by'], div[id*='aod-pinned-offer-sold-by']")
                 if sold_by_div:
-                    sold_text = sold_by_div.get_text(" ", strip=True)
+                    sold_text = " ".join(sold_by_div.text.split())
                     if "Amazon México" in sold_text or "Amazon.com.mx" in sold_text:
                         amazon_found = True
                         if "Amazon México" not in all_sellers:
@@ -434,11 +477,10 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
                         if name and name not in all_sellers:
                             all_sellers.append(name)
 
-        # Fallback amplio: si no se encontró ningún vendedor en los bloques,
-        # escanear TODOS los enlaces /gp/aag/main en la página de ofertas
+        # Fallback amplio: si no se encontró ningún vendedor en los bloques
         if not all_sellers:
-            for link in soup.find_all("a", href=re.compile(r"/gp/aag/main")):
-                name = link.get_text(strip=True)
+            for link in page.css("a[href*='/gp/aag/main']"):
+                name = link.text.strip()
                 if not name:
                     continue
                 if "Amazon México" in name or "Amazon.com.mx" in name:
@@ -449,30 +491,30 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
                     all_sellers.append(name)
 
         # Fallback texto: buscar literal "Amazon México" en el HTML
-        if not amazon_found and re.search(r'vendedor\s+Amazon\s+M[eé]xico', text, re.I):
+        if not amazon_found and re.search(r'vendedor\s+Amazon\s+M[eé]xico', page.text, re.I):
             amazon_found = True
             if "Amazon México" not in all_sellers:
                 all_sellers.insert(0, "Amazon México")
 
-        return amazon_found, all_sellers, best_price
+        return amazon_found, all_sellers, best_price, bytes_downloaded
 
     except Exception as e:
         logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
-        return False, [], None
+        return False, [], None, bytes_downloaded
 
 
-def _has_multiple_sellers(soup: BeautifulSoup, text: str) -> bool:
+def _has_multiple_sellers(page, text: str) -> bool:
     """Detecta si la página muestra que hay múltiples vendedores/ofertas."""
     multi_signals = [
-        soup.find("a", {"id": "buybox-see-all-buying-choices"}),
-        soup.find("a", string=re.compile(r"ver opciones de compra|see all buying options|ver \d+ ofertas", re.I)),
-        soup.find("div", {"id": "aod-ingress-container"}),
+        css_first(page, "a#buybox-see-all-buying-choices"),
+        css_first(page, "a[href*='buying-choices']"),
+        css_first(page, "div#aod-ingress-container"),
     ]
     if any(multi_signals):
         return True
 
     # Señales en texto
-    if re.search(r'otros vendedores|other sellers|opciones de compra|buying options', text, re.I):
+    if re.search(r'otros vendedores|other sellers|opciones de compra|buying options|ver \d+ ofertas|see all buying options', text, re.I):
         return True
 
     return False
@@ -483,52 +525,59 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
     Scrape una URL de Amazon MX y retorna un ProductSnapshot.
     No lanza excepciones; los errores van dentro del snapshot.
     """
+    bytes_downloaded = 0
     try:
-        session = get_session()
-        response = session.get(url, timeout=15)
-        response.raise_for_status()
+        page = get_page(url)
+        bytes_downloaded += get_page_size(page)
 
-        soup = BeautifulSoup(response.content, "lxml")
+        if page.status not in (200, 404, 503) and page.status >= 400:
+            raise Exception(f"HTTP Error {page.status}")
 
-        if _is_captcha(soup):
+        if _is_captcha(page):
             logger.warning(f"[CAPTCHA] {product_name} — se reintentará en el próximo ciclo.")
+            
+            # Guardar el HTML de la página bloqueada para revisión
+            try:
+                import os
+                os.makedirs("/root/PBS/logs", exist_ok=True)
+                with open("/root/PBS/logs/last_captcha.html", "wb") as f:
+                    f.write(page.body if hasattr(page, 'body') else str(page).encode('utf-8'))
+                logger.info("Guardado HTML del CAPTCHA en /root/PBS/logs/last_captcha.html")
+            except Exception as e:
+                logger.error(f"No se pudo guardar HTML del CAPTCHA: {e}")
+
             rotate_session()
             return ProductSnapshot(
                 name=product_name, url=url,
                 title=product_name, in_stock=False,
                 availability_text="CAPTCHA detectado",
                 price="N/D", captcha_detected=True,
-                normalized_title=normalize_title(product_name)
+                normalized_title=normalize_title(product_name),
+                bytes_downloaded=bytes_downloaded
             )
 
         # Título del producto
-        title_el = soup.find("span", {"id": "productTitle"})
-        title = title_el.get_text(strip=True) if title_el else product_name
+        title_el = css_first(page, "span#productTitle")
+        title = title_el.text.strip() if title_el else product_name
 
-        in_stock, avail_text, is_preorder = _extract_availability(soup)
-        price = _extract_price(soup)
-        seller = _extract_seller(soup)
-        release_date = _extract_release_date(soup)
-        image_url = _extract_image_url(soup)
+        in_stock, avail_text, is_preorder = _extract_availability(page)
+        price = _extract_price(page)
+        seller = _extract_seller(page)
+        release_date = _extract_release_date(page)
+        image_url = _extract_image_url(page)
 
-        full_text = response.text
+        full_text = page.text
         amazon_present = False
         all_sellers = [seller] if seller != "Desconocido" else []
 
         # ── LÓGICA QUIRÚRGICA: VERIFICAR AMAZON MX ────────────────────────────
-        # Determinar si hay múltiples ofertas
-        has_multi = _has_multiple_sellers(soup, full_text)
+        has_multi = _has_multiple_sellers(page, full_text)
         
         if seller == "Amazon México":
             amazon_present = True
 
-        # Consulta la página de ofertas si:
-        # 1. Necesitamos explícitamente a Amazon (amazon_only) y aún no lo detectamos.
-        # 2. O si el vendedor es desconocido y queremos intentar identificarlo.
-        # 3. Y siempre que haya múltiples ofertas detectadas.
         should_check_offers = has_multi or seller == "Desconocido"
         
-        # Optimización: si no necesitamos Amazon y ya hay stock, no es crítico ver ofertas
         if not amazon_only and in_stock:
              should_check_offers = False
 
@@ -536,8 +585,9 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
             asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
             if asin_match:
                 asin = asin_match.group(1)
-                amazon_present_offers, sellers_list, offers_price = _check_amazon_mx_in_offers(asin)
+                amazon_present_offers, sellers_list, offers_price, offers_bytes = _check_amazon_mx_in_offers(asin)
                 amazon_present = amazon_present or amazon_present_offers
+                bytes_downloaded += offers_bytes
                 
                 # Si no teníamos precio real, usar el de las ofertas
                 if (price == "No disponible" or ".." in price) and offers_price:
@@ -570,17 +620,19 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
             amazon_present=amazon_present,
             image_url=image_url,
             is_preorder=is_preorder,
-            sellers=all_sellers
+            sellers=all_sellers,
+            bytes_downloaded=bytes_downloaded
         )
 
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logger.error(f"[ERROR] {product_name}: {e}")
         return ProductSnapshot(
             name=product_name, url=url,
             title=product_name, in_stock=False,
             availability_text="Error de conexión",
             price="N/D", error=str(e),
-            normalized_title=normalize_title(product_name)
+            normalized_title=normalize_title(product_name),
+            bytes_downloaded=bytes_downloaded
         )
 
 
@@ -593,3 +645,4 @@ if __name__ == "__main__":
     print(f"\n[SEARCH] Scrapeando: {test_url}\n")
     snapshot = scrape("Test Product", test_url)
     print(json.dumps(asdict(snapshot), ensure_ascii=False, indent=2))
+

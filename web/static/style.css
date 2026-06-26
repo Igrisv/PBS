@@ -299,6 +299,47 @@ tr:last-child td { border-bottom: none; }
 .amazon-link { font-size: 0.75rem; color: var(--pink); text-decoration: none; margin-top: 0.75rem; font-weight: 600; display: inline-block; }
 .amazon-link:hover { text-decoration: underline; }
 
+/* ─── Watchlist Thumbnails ────────────────────────────────────────────────────── */
+.wl-img-cell { width: 60px; padding: 0.5rem 0.35rem; vertical-align: middle; }
+.wl-thumb {
+    width: 52px; height: 52px;
+    object-fit: contain;
+    border-radius: 0.5rem;
+    background: white;
+    padding: 2px;
+    display: block;
+}
+.wl-thumb-placeholder {
+    width: 52px; height: 52px;
+    background: rgba(255,255,255,0.04);
+    border: 1px dashed var(--border);
+    border-radius: 0.5rem;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 0.9rem;
+}
+.mini-badge {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.3rem;
+    font-size: 0.67rem;
+    font-weight: 700;
+    vertical-align: middle;
+    margin-right: 0.25rem;
+}
+.mini-stock { background: rgba(16,185,129,0.18); color: var(--success); }
+.mini-empty { background: rgba(239,68,68,0.18); color: var(--danger); }
+.mini-seller {
+    display: inline-block;
+    font-size: 0.67rem;
+    color: var(--purple);
+    background: rgba(139,92,246,0.12);
+    border-radius: 0.3rem;
+    padding: 0.1rem 0.4rem;
+    vertical-align: middle;
+    margin-right: 0.25rem;
+}
+
+
 
 /* ─── Badges ─────────────────────────────────────────────────────────────────── */
 .badge { padding: 0.2rem 0.55rem; border-radius: 0.4rem; font-size: 0.72rem; font-weight: 700; }

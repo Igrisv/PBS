@@ -47,7 +47,8 @@ def send_telegram_alert(
     product_url: str,
     availability_text: str,
     price: str,
-    change_type: str
+    change_type: str,
+    seller: str = None
 ) -> bool:
     """Envía una alerta de producto usando plantillas personalizables."""
     def h_esc(text):
@@ -61,7 +62,8 @@ def send_telegram_alert(
         "restock": tpls.get("header_restock"),
         "new_launch": tpls.get("header_new"),
         "price_change": tpls.get("header_price"),
-        "preorder": tpls.get("header_preorder")
+        "preorder": tpls.get("header_preorder"),
+        "released": "🎉 <b>¡YA DISPONIBLE! (Fuera de Preventa)</b>"
     }
     header = header_map.get(change_type) or tpls.get("header_default") or "🚨 <b>ALERTA DE POKÉMON</b> 🚨"
 
@@ -75,8 +77,11 @@ def send_telegram_alert(
         f"{header}\n\n"
         f"{l_prod} {h_esc(product_name)}\n"
         f"{l_stat} {h_esc(availability_text)}\n"
-        f"{l_pric} {h_esc(price)}\n\n"
+        f"{l_pric} {h_esc(price)}\n"
     )
+    if seller and seller.lower() != "amazon méxico":
+        msg += f"🤝 <b>Vendedor:</b> {h_esc(seller)}\n"
+    msg += "\n"
     
     if tpls.get("show_footer", True):
         msg += f"<a href='{product_url}'>{f_text}</a>"

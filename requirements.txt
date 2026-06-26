@@ -2,8 +2,7 @@ requests
 python-dotenv
 flask
 flask-cors
-beautifulsoup4
-lxml
+scrapling
 playwright
 playwright-stealth
 portalocker

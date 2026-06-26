@@ -1,7 +1,7 @@
 {
   "searches": [
     {
-      "name": "Búsqueda Predeterminada",
+      "name": "B\u00fasqueda Predeterminada",
       "url": "https://www.amazon.com.mx/s?k=pokemon",
       "enabled": true
     },
@@ -9,6 +9,16 @@
       "name": "Pokemon Peluches",
       "url": "https://www.amazon.com.mx/s?k=pokemon+peluches",
       "enabled": false
+    },
+    {
+      "name": "Pokemon Booster Bundle",
+      "url": "https://www.amazon.com.mx/s?k=Pokemon+Booster+Bundle&s=date-desc-rank",
+      "enabled": true
+    },
+    {
+      "name": "Pokemon Expansion",
+      "url": "https://www.amazon.com.mx/s?k=Pokemon+Expansion&s=date-desc-rank",
+      "enabled": true
     }
   ],
   "excluded_keywords": [
@@ -27,7 +37,7 @@
     "reservar",
     "reservar ahora",
     "preventa",
-    "próximamente"
+    "pr\u00f3ximamente"
   ],
   "max_product_age_days": 365,
   "max_asins_per_search": 20

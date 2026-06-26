@@ -6,6 +6,6 @@
   "amazon_email": "Roieldmusic@gmail.com",
   "amazon_password": "13902286Ra$$",
   "amazon_only": false,
-  "min_jitter": 1,
-  "max_jitter": 3
+  "min_jitter": 5,
+  "max_jitter": 12
 }

@@ -9,6 +9,7 @@ import threading
 from flask import Flask, jsonify, request, render_template
 from pathlib import Path
 import sys
+import subprocess
 
 BASE_DIR_STR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR_STR not in sys.path:
@@ -141,7 +142,17 @@ def get_subscription():
 @app.route("/api/products", methods=["GET", "POST"])
 def manage_products():
     if request.method == "GET":
-        return jsonify(get_json_data(PRODUCTS_FILE))
+        products = get_json_data(PRODUCTS_FILE)
+        if isinstance(products, list):
+            # Enriquecer cada producto con datos del último snapshot (imagen, precio, vendedor)
+            snapshots = get_json_data(STATE_FILE)
+            for p in products:
+                snap = snapshots.get(p.get("url", ""), {}) if isinstance(snapshots, dict) else {}
+                p.setdefault("image_url", snap.get("image_url"))
+                p.setdefault("last_price", snap.get("price"))
+                p.setdefault("last_seller", snap.get("seller"))
+                p.setdefault("last_in_stock", snap.get("in_stock"))
+        return jsonify(products)
 
     if request.method == "POST":
         if not check_token():
@@ -420,6 +431,56 @@ def start_web_server(host="0.0.0.0", port=5000, shared_lock=None):
         global file_lock
         file_lock = shared_lock
     app.run(host=host, port=port, debug=False, use_reloader=False)
+
+@app.route("/api/system/status")
+def system_status():
+    if not check_token():
+        return jsonify({"error": "Unauthorized"}), 401
+    
+    # Run pm2 jlist
+    try:
+        result = subprocess.run(["pm2", "jlist"], capture_output=True, text=True, check=True)
+        pm2_data = json.loads(result.stdout)
+    except Exception as e:
+        pm2_data = []
+        logger.error(f"Error running pm2 jlist: {e}")
+
+    # Process statuses
+    processes = []
+    for p in pm2_data:
+        name = p.get("name")
+        if name in ["restock", "pbs-bridge", "pbs-web"]:
+            processes.append({
+                "name": name,
+                "status": p.get("pm2_env", {}).get("status", "unknown"),
+                "memory": p.get("monit", {}).get("memory", 0),
+                "cpu": p.get("monit", {}).get("cpu", 0)
+            })
+            
+    # Check global CAPTCHA state
+    snapshots = get_json_data(STATE_FILE)
+    captcha_active = any(s.get("captcha_detected", False) for s in snapshots.values() if isinstance(s, dict))
+    
+    return jsonify({
+        "processes": processes,
+        "captcha_active": captcha_active
+    })
+
+@app.route("/api/system/process/<name>/<action>", methods=["POST"])
+def system_process_action(name, action):
+    if not check_token():
+        return jsonify({"error": "Unauthorized"}), 401
+        
+    valid_actions = ["start", "stop", "restart"]
+    if action not in valid_actions:
+        return jsonify({"error": "Acción inválida"}), 400
+        
+    try:
+        subprocess.run(["pm2", action, name], capture_output=True, text=True, check=True)
+        return jsonify({"success": True})
+    except Exception as e:
+        logger.error(f"Error executing pm2 {action} {name}: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/admin/operational", methods=["GET"])

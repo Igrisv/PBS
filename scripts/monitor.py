@@ -58,25 +58,26 @@ def _parse_price(price_text: str) -> Optional[float]:
 
 
 def should_alert_for_product(product: dict, snapshot: ProductSnapshot, amazon_only: bool = True) -> tuple[bool, str]:
-    """Aplica filtros de precio y vendedor antes de disparar alertas.
-    
-    REGLA:
-    - Si amazon_only es True, solo se alerta si Amazon México está disponible.
-    - Si amazon_only es False, se alerta para cualquier vendedor.
-    """
+    """Aplica filtros de precio y vendedor antes de disparar alertas."""
     max_price = product.get("max_price")
+    price_ok = False
+    
     if max_price is not None:
         current_price = _parse_price(snapshot.price)
-        if current_price is not None and current_price > float(max_price):
-            return False, f"max_price={max_price} (precio actual {snapshot.price})"
+        if current_price is not None:
+            if current_price > float(max_price):
+                return False, f"precio excedido ({current_price} > {max_price})"
+            else:
+                price_ok = True
 
     if amazon_only:
         # Verificar que Amazon México esté disponible como opción de compra
         seller = (snapshot.seller or "").strip()
         is_amazon_mx = seller == "Amazon México" or snapshot.amazon_present
 
-        if not is_amazon_mx:
-            return False, f"Amazon MX no disponible (vendedor: {seller or 'Desconocido'})"
+        # Si no es Amazon MX, validar si el precio es bueno como fallback (doble verificación)
+        if not is_amazon_mx and not price_ok:
+            return False, f"Amazon MX no disponible y precio no validado (vendedor: {seller or 'Desconocido'})"
 
     return True, "ok"
 
@@ -130,11 +131,15 @@ def detect_change(
     if prev.in_stock and not curr.in_stock:
         return None
 
-    # Caso 3: REABASTECIMIENTO (Out of Stock -> In Stock)
+    # Caso 3: SALIDA DE PREVENTA A STOCK (tiene prioridad sobre restock genérico)
+    if prev.is_preorder and curr.in_stock and not curr.is_preorder:
+        return "released"
+
+    # Caso 4: REABASTECIMIENTO (Out of Stock -> In Stock)
     if not prev.in_stock and curr.in_stock:
         return "restock"
 
-    # Caso 4: CAMBIO DE PRECIO (Si ambos tienen precio válido)
+    # Caso 5: CAMBIO DE PRECIO (Si ambos tienen precio válido)
     def clean_price(p):
         try:
             return float(''.join(c for c in p if c.isdigit() or c == '.'))
@@ -147,9 +152,10 @@ def detect_change(
     if p_prev and p_curr and abs(p_prev - p_curr) > 1.0: # Cambio > $1 MXN
         return "price_change"
 
-    # Caso 5: PREVENTA (Detectada ahora)
-    if curr.is_preorder and (prev is None or not prev.is_preorder):
+    # Caso 6: PREVENTA (Detectada ahora por primera vez)
+    if curr.is_preorder and not prev.is_preorder:
         return "preorder"
+
 def run_monitor(
     products_path: str,
     interval_seconds: int,
@@ -182,6 +188,7 @@ def run_monitor(
     
     cycle = 0
     captcha_cooldown_until = 0
+    cycle_bytes = [0]
 
     def process_product(product, cycle_snapshots, config):
         nonlocal captcha_cooldown_until
@@ -203,8 +210,8 @@ def run_monitor(
         
         if curr.captcha_detected:
             with state_lock:
-                logger.warning(f"⚠️  CAPTCHA detectado en '{name}'. Pausando monitor 5 min.")
-                captcha_cooldown_until = time.time() + 300 
+                logger.warning(f"⚠️  CAPTCHA detectado en '{name}'. Pausando monitor 1 min.")
+                captcha_cooldown_until = time.time() + 60 
             return
 
         if curr.error:
@@ -223,6 +230,7 @@ def run_monitor(
         
         with state_lock:
             prev = cycle_snapshots.get(url)
+            cycle_bytes[0] += getattr(curr, 'bytes_downloaded', 0)
             if should_alert:
                 change = detect_change(prev, curr)
                 if change:
@@ -242,6 +250,7 @@ def run_monitor(
 
     while True:
         cycle += 1
+        cycle_bytes[0] = 0
         now_ts = time.time()
         now_str = time.strftime('%H:%M:%S')
         
@@ -270,8 +279,8 @@ def run_monitor(
         op_cfg = get_notif_config(OP_CONFIG_PATH)
 
         # DISPARAR HILOS EN PARALELO
-        # Usamos un pool pequeño (5 hilos) para no saturar a Amazon desde un mismo IP
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        # Usamos un pool reducido (2 hilos) para no saturar a Amazon desde un mismo IP
+        with ThreadPoolExecutor(max_workers=2) as executor:
             executor.map(lambda p: process_product(p, snapshots, op_cfg), products)
 
         # Fase Discovery (secuencial al final del ciclo)
@@ -285,5 +294,13 @@ def run_monitor(
                 logger.error(f"  [DISCOVERY] Error: {e}")
 
         current_sleep = interval_seconds() if callable(interval_seconds) else interval_seconds
-        logger.info(f"\n  ⏳ Ciclo completado. Próxima revisión en {current_sleep}s...\n")
+        
+        total_kb = cycle_bytes[0] / 1024
+        if total_kb > 1024:
+            bw_str = f"{total_kb / 1024:.2f} MB"
+        else:
+            bw_str = f"{total_kb:.2f} KB"
+            
+        logger.info(f"\n  📊 Ancho de banda del ciclo: {bw_str}")
+        logger.info(f"  ⏳ Ciclo completado. Próxima revisión en {current_sleep}s...\n")
         time.sleep(current_sleep)

@@ -1,6 +1,2 @@
-# Agregue sus proxies aquí, uno por línea.
-# Formatos soportados:
-# http://host:port
-# http://user:pass@host:port
-# https://host:port
-# https://user:pass@host:port
+
+http://7ce690261e4f31f00bc3__cr.mx:208aa7050d7131af@gw.dataimpulse.com:823

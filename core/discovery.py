@@ -5,7 +5,6 @@ Lee su configuración desde data/discovery_config.json para ser gestionable por 
 """
 
 import logging
-import requests
 import json
 import os
 import re
@@ -14,16 +13,21 @@ import time
 import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from bs4 import BeautifulSoup
 
 # ─── Path Setup ──────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from core.scraper import _build_headers, _is_captcha, scrape, normalize_title
+from core.scraper import _is_captcha, scrape, normalize_title, get_page
 
 logger = logging.getLogger(__name__)
+
+def css_first(node, selector):
+    res = node.css(selector)
+    return res[0] if res else None
+
+
 
 # ─── Rutas absolutas ─────────────────────────────────────────────────────────────
 DISCOVERED_FILE     = str(BASE_DIR / "data" / "discovered.json")
@@ -34,6 +38,8 @@ _DEFAULT_CONFIG = {
     "searches": [
         {"name": "Pokemon TCG",  "url": "https://www.amazon.com.mx/s?k=Pokemon+TCG&s=date-desc-rank",  "enabled": True},
         {"name": "Pokemon ETB",  "url": "https://www.amazon.com.mx/s?k=Pokemon+Elite+Trainer+Box&s=date-desc-rank", "enabled": True},
+        {"name": "Pokemon Booster Bundle", "url": "https://www.amazon.com.mx/s?k=Pokemon+Booster+Bundle&s=date-desc-rank", "enabled": True},
+        {"name": "Pokemon Expansion", "url": "https://www.amazon.com.mx/s?k=Pokemon+Expansion&s=date-desc-rank", "enabled": True},
     ],
     "excluded_keywords": ["peluche", "plush", "sleeve", "protector"],
     "preorder_keywords": [
@@ -145,24 +151,22 @@ def _is_preorder(snap, preorder_keywords: list) -> bool:
     return any(kw.lower() in combined for kw in preorder_keywords)
 
 
-def _extract_asins_from_page(html: bytes) -> list[str]:
+def _extract_asins_from_page(page) -> list[str]:
     """Extrae ASINs únicos de una página de resultados de Amazon."""
-    soup = BeautifulSoup(html, "lxml")
-
-    if _is_captcha(soup):
+    if _is_captcha(page):
         return []  # Señal de CAPTCHA
 
     asins = []
     # Método principal: atributo data-asin en contenedores de producto
-    for tag in soup.find_all(attrs={"data-asin": True}):
-        a = tag.get("data-asin", "").strip()
+    for tag in page.css("[data-asin]"):
+        a = tag.attrib.get("data-asin", "").strip()
         if a and len(a) == 10 and a not in asins:
             asins.append(a)
 
     # Fallback: links con /dp/ASIN
     if not asins:
-        for link in soup.find_all("a", href=re.compile(r"/dp/([A-Z0-9]{10})")):
-            m = re.search(r"/dp/([A-Z0-9]{10})", link["href"])
+        for link in page.css("a[href*='/dp/']"):
+            m = re.search(r"/dp/([A-Z0-9]{10})", link.attrib.get("href", ""))
             if m and m.group(1) not in asins:
                 asins.append(m.group(1))
 
@@ -199,16 +203,16 @@ def discover_new_products() -> list:
         time.sleep(random.uniform(2, 4))
 
         try:
-            resp = requests.get(url, headers=_build_headers(), timeout=15)
+            page = get_page(url)
         except Exception as e:
             logger.error(f"[DISCOVERY] Error de red en '{search_name}': {e}")
             continue
 
-        if resp.status_code != 200:
-            logger.warning(f"[DISCOVERY] HTTP {resp.status_code} en '{search_name}', saltando.")
+        if page.status != 200:
+            logger.warning(f"[DISCOVERY] HTTP {page.status} en '{search_name}', saltando.")
             continue
 
-        all_asins = _extract_asins_from_page(resp.content)
+        all_asins = _extract_asins_from_page(page)
         if not all_asins:
             logger.warning(f"[DISCOVERY] CAPTCHA o sin ASINs en '{search_name}'.")
             continue

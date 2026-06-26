@@ -68,18 +68,25 @@ WEB_PORT        = int(os.getenv("DASHBOARD_PORT", "5000"))
 
 GLOBAL_LOCK_FILE = os.path.join(BASE_DIR, "data", "app.lock")
 file_lock = get_file_lock(GLOBAL_LOCK_FILE)
-ALERT_CACHE: set = set()
+ALERT_CACHE: dict = {}
+ALERT_TTL_SECONDS = 86400 * 3 # 3 días
 
 
 def on_change(snapshot: ProductSnapshot, change_type: str) -> None:
     global ALERT_CACHE
+    import time
+    now = time.time()
+    
+    # Limpieza basada en TTL
+    keys_to_delete = [k for k, ts in ALERT_CACHE.items() if now - ts > ALERT_TTL_SECONDS]
+    for k in keys_to_delete:
+        del ALERT_CACHE[k]
+
     alert_key = f"{snapshot.url}_{change_type}_{snapshot.price}"
     if alert_key in ALERT_CACHE:
         logger.info(f"  [DUP] Alerta ya enviada: {snapshot.name}")
         return
-    ALERT_CACHE.add(alert_key)
-    if len(ALERT_CACHE) > 200:
-        ALERT_CACHE.clear()
+    ALERT_CACHE[alert_key] = now
 
     logger.info(f"[ALERTA] {change_type.upper()} → {snapshot.name}")
 
@@ -94,7 +101,8 @@ def on_change(snapshot: ProductSnapshot, change_type: str) -> None:
                 bot_token=tg["bot_token"], chat_id=tg["chat_id"],
                 product_name=snapshot.name, product_url=snapshot.url,
                 availability_text=snapshot.availability_text,
-                price=snapshot.price, change_type=change_type
+                price=snapshot.price, change_type=change_type,
+                seller=snapshot.seller
             )
         except Exception as e:
             logger.error(f"  [TELEGRAM] {e}")
@@ -112,7 +120,8 @@ def on_change(snapshot: ProductSnapshot, change_type: str) -> None:
                 availability_text=snapshot.availability_text,
                 price=snapshot.price,
                 change_type=change_type,
-                image_url=snapshot.image_url
+                image_url=snapshot.image_url,
+                seller=snapshot.seller
             )
         except Exception as e:
             logger.error(f"  [BRIDGE] {e}")
@@ -128,6 +137,7 @@ def on_change(snapshot: ProductSnapshot, change_type: str) -> None:
                 price=snapshot.price, change_type=change_type,
                 template_name=wm.get("template_name", "inventory_update"),
                 language_code=wm.get("language_code", "es_MX"),
+                seller=snapshot.seller
             )
         except Exception as e:
             logger.error(f"  [WHATSAPP] {e}")
@@ -140,14 +150,8 @@ def main():
     logger.info(f"  ⏱️  Intervalo: {CHECK_INTERVAL}s")
     logger.info("=" * 60)
 
-    # Dashboard web en segundo plano
-    web_thread = threading.Thread(
-        target=start_web_server,
-        args=(WEB_HOST, WEB_PORT, file_lock),
-        daemon=True
-    )
-    web_thread.start()
-    logger.info(f"🌐 Dashboard: http://{WEB_HOST}:{WEB_PORT}")
+    # El dashboard web ahora corre en un proceso independiente (pbs-web) vía PM2.
+    logger.info("🌐 Dashboard: Gestionado por pm2 (pbs-web)")
 
     # Importar AQUÍ para que solo este ejecutable cargue el monitor de restock
     from scripts.monitor import run_monitor
