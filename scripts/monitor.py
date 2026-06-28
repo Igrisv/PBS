@@ -13,6 +13,8 @@ import threading
 from pathlib import Path
 from typing import Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
+import traceback
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
@@ -25,8 +27,28 @@ logger = logging.getLogger(__name__)
 
 # Configuración
 STATE_FILE = os.path.join(BASE_DIR, "data", "monitor_state.json")
+STATS_FILE = os.path.join(BASE_DIR, "data", "stats.json")
 DISCOVERY_EVERY_N_CYCLES = 3
 
+def load_stats():
+    if not os.path.exists(STATS_FILE):
+        return {"total_bytes_vps": 0, "total_bytes_proxy": 0, "captchas_hit": 0, "start_time": time.time()}
+    try:
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            st = json.load(f)
+            if "start_time" not in st: st["start_time"] = time.time()
+            return st
+    except:
+        return {"total_bytes_vps": 0, "total_bytes_proxy": 0, "captchas_hit": 0, "start_time": time.time()}
+
+def save_stats(stats):
+    try:
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=2)
+    except:
+        pass
+
+global_stats = load_stats()
 
 def _is_amazon_mx_url(url: str) -> bool:
     """True si la URL apunta a Amazon MX o Amazon.com.mx."""
@@ -230,7 +252,17 @@ def run_monitor(
         
         with state_lock:
             prev = cycle_snapshots.get(url)
-            cycle_bytes[0] += getattr(curr, 'bytes_downloaded', 0)
+            vps_b = getattr(curr, 'bytes_vps', 0)
+            prox_b = getattr(curr, 'bytes_proxy', 0)
+            blocked = getattr(curr, 'vps_blocked', False)
+            
+            # (Deprecado backward compat)
+            cycle_bytes[0] += vps_b + prox_b + getattr(curr, 'bytes_downloaded', 0)
+            
+            global_stats["total_bytes_vps"] = global_stats.get("total_bytes_vps", 0) + vps_b
+            global_stats["total_bytes_proxy"] = global_stats.get("total_bytes_proxy", 0) + prox_b
+            if blocked:
+                global_stats["captchas_hit"] = global_stats.get("captchas_hit", 0) + 1
             if should_alert:
                 change = detect_change(prev, curr)
                 if change:
@@ -244,9 +276,12 @@ def run_monitor(
             # Guardar estado hilos-seguro
             cycle_snapshots[url] = curr
             if file_lock:
-                with file_lock: save_state(cycle_snapshots)
+                with file_lock: 
+                    save_state(cycle_snapshots)
+                    save_stats(global_stats)
             else:
                 save_state(cycle_snapshots)
+                save_stats(global_stats)
 
     while True:
         cycle += 1

@@ -26,6 +26,98 @@
         .sys-btn.start { background: #10b981; }
         .sys-btn.stop { background: #ef4444; }
         .sys-btn.restart { background: #3b82f6; }
+
+        /* ── Search Bar ────────────────────────────────────── */
+        .search-bar-wrap {
+            position: relative;
+            margin-bottom: 16px;
+        }
+        .search-bar-wrap .search-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1rem;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        .search-bar-wrap input[type="search"] {
+            width: 100%;
+            padding: 10px 16px 10px 40px;
+            background: #12121c;
+            border: 1px solid #2a2a3d;
+            border-radius: 10px;
+            color: #e0e0f0;
+            font-size: 0.95rem;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .search-bar-wrap input[type="search"]:focus {
+            border-color: #7c3aed;
+            box-shadow: 0 0 0 3px rgba(124,58,237,0.18);
+        }
+        .search-bar-wrap input[type="search"]::-webkit-search-cancel-button {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 16px; width: 16px;
+            background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23aaa'%3E%3Cpath d='M18 6L6 18M6 6l12 12' stroke='%23aaa' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        .search-count {
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: -10px;
+            margin-bottom: 12px;
+            padding-left: 4px;
+            min-height: 18px;
+            transition: opacity 0.2s;
+        }
+        .search-count.hidden { opacity: 0; }
+        mark.hl {
+            background: rgba(124,58,237,0.35);
+            color: inherit;
+            border-radius: 2px;
+            padding: 0 1px;
+        }
+        /* ── Availability Chips ──────────────────────────────────── */
+        .avail-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+        .avail-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 999px;
+            font-size: 0.88rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1.5px solid transparent;
+            transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+            user-select: none;
+        }
+        .avail-chip:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+        }
+        .avail-chip.active {
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.15);
+        }
+        .avail-chip .chip-num {
+            font-size: 1.1rem;
+            font-weight: 800;
+        }
+        .chip-stock  { background: rgba(16,185,129,0.15); border-color: #10b981; color: #10b981; }
+        .chip-empty  { background: rgba(239,68,68,0.12);  border-color: #ef4444; color: #ef4444; }
+        .chip-pre    { background: rgba(245,158,11,0.15); border-color: #f59e0b; color: #f59e0b; }
+        .chip-error  { background: rgba(156,163,175,0.12);border-color: #6b7280; color: #9ca3af; }
+        .chip-all    { background: rgba(124,58,237,0.12); border-color: #7c3aed; color: #a78bfa; }
     </style>
 </head>
 <body>
@@ -51,7 +143,7 @@
                     <span class="dot"></span> EN VIVO
                 </div>
             </div>
-            <div class="stats-grid">
+            <div class="stats-grid" style="margin-bottom: 10px;">
                 <div class="stat-card">
                     <span id="stat-watchlist" class="stat-value">0</span>
                     <span class="stat-label">Watchlist</span>
@@ -67,6 +159,25 @@
                 <div class="stat-card">
                     <span id="stat-mem" class="stat-value">0</span>
                     <span class="stat-label">Memorias</span>
+                </div>
+            </div>
+            <!-- Grid de Red -->
+            <div class="stats-grid">
+                <div class="stat-card" style="border-left: 4px solid #10b981;">
+                    <span id="stat-vps-mb" class="stat-value">0.00 MB</span>
+                    <span class="stat-label">📡 Datos Servidor (Acumulado)</span>
+                </div>
+                <div class="stat-card" style="border-left: 4px solid #ef4444;">
+                    <span id="stat-proxy-mb" class="stat-value">0.00 MB</span>
+                    <span class="stat-label">🛡️ Datos Proxy (Costo Acum.)</span>
+                </div>
+                <div class="stat-card" style="border-left: 4px solid #f59e0b;">
+                    <span id="stat-captchas-hr" class="stat-value">0.0</span>
+                    <span class="stat-label">🛑 Bloqueos / Hora</span>
+                </div>
+                <div class="stat-card" style="border-left: 4px solid #3b82f6;">
+                    <span id="stat-savings" class="stat-value">0%</span>
+                    <span class="stat-label">💰 Ahorro de Ancho de Banda</span>
                 </div>
             </div>
         </header>
@@ -91,6 +202,17 @@
                     <button onclick="addProduct()" class="btn-primary btn-inline">+ Añadir</button>
                 </div>
                 <div id="add-feedback" class="feedback-msg"></div>
+
+                <!-- Chips resumen Watchlist -->
+                <div id="wl-chips" class="avail-chips"></div>
+
+                <!-- Buscador Watchlist -->
+                <div class="search-bar-wrap">
+                    <span class="search-icon">🔍</span>
+                    <input type="search" id="search-watchlist" placeholder="Filtrar por nombre, vendedor, precio..." oninput="filterWatchlist(this.value)" autocomplete="off">
+                </div>
+                <div class="search-count hidden" id="count-watchlist"></div>
+
                 <table>
                     <thead>
                         <tr>
@@ -111,6 +233,16 @@
         <div id="tab-realtime" class="tab-content">
             <div class="section-card">
                 <h2 class="section-title">⚡ Estado en Tiempo Real</h2>
+
+                <!-- Chips de disponibilidad -->
+                <div id="avail-chips" class="avail-chips"></div>
+
+                <!-- Buscador Snapshots -->
+                <div class="search-bar-wrap">
+                    <span class="search-icon">🔍</span>
+                    <input type="search" id="search-realtime" placeholder="Filtrar por nombre, precio, vendedor, estado..." oninput="filterSnapshots(this.value)" autocomplete="off">
+                </div>
+                <div class="search-count hidden" id="count-realtime"></div>
                 <div id="snapshots-grid" class="snapshot-grid">
                     <div class="empty-state">Cargando snapshots...</div>
                 </div>
@@ -126,6 +258,12 @@
                     <button onclick="clearDiscovery()" class="btn-delete-sm">🗑️ Borrar Todo</button>
                 </div>
                 <p class="section-desc">Ordenados por más reciente. Agrega directamente a la Watchlist con un clic.</p>
+                <!-- Buscador Discovery -->
+                <div class="search-bar-wrap">
+                    <span class="search-icon">🔍</span>
+                    <input type="search" id="search-discovery" placeholder="Filtrar por nombre, ASIN, precio..." oninput="filterDiscovery(this.value)" autocomplete="off">
+                </div>
+                <div class="search-count hidden" id="count-discovery"></div>
                 <div id="discovery-grid" class="discovery-grid">
                     <div class="empty-state">Cargando descubrimientos...</div>
                 </div>
@@ -148,7 +286,12 @@
     <script>
     // ── Globals ───────────────────────────────────────────────────────────────
     let allProducts = [];
+    let allSnapshots = [];
+    let allDiscoveries = [];
     let editingIndex = null;
+    let watchlistQuery = '';
+    let snapshotQuery  = '';
+    let discoveryQuery = '';
 
     // ── Tab Switching ─────────────────────────────────────────────────────────
     function switchTab(name) {
@@ -190,6 +333,30 @@
         document.getElementById('stat-active').textContent   = data.active_count;
         document.getElementById('stat-discovered').textContent = data.discovered_count;
         document.getElementById('stat-mem').textContent       = data.memory_count;
+        
+        // Network Stats
+        if (data.network_stats) {
+            const vpsBytes = data.network_stats.total_bytes_vps || 0;
+            const proxyBytes = data.network_stats.total_bytes_proxy || 0;
+            const captchas = data.network_stats.captchas_hit || 0;
+            const startTime = data.network_stats.start_time || (Date.now() / 1000);
+            
+            const vpsMB = (vpsBytes / (1024 * 1024)).toFixed(2);
+            const proxyMB = (proxyBytes / (1024 * 1024)).toFixed(2);
+            
+            const hoursElapsed = Math.max((Date.now() / 1000 - startTime) / 3600, 0.01);
+            const blocksPerHour = (captchas / hoursElapsed).toFixed(1);
+            
+            let savings = 0;
+            if (vpsBytes + proxyBytes > 0) {
+                savings = ((vpsBytes / (vpsBytes + proxyBytes)) * 100).toFixed(1);
+            }
+
+            document.getElementById('stat-vps-mb').textContent = vpsMB + ' MB';
+            document.getElementById('stat-proxy-mb').textContent = proxyMB + ' MB';
+            document.getElementById('stat-captchas-hr').textContent = blocksPerHour;
+            document.getElementById('stat-savings').textContent = savings + '%';
+        }
     }
 
     // ── Products (Watchlist) ──────────────────────────────────────────────────
@@ -199,14 +366,88 @@
         renderProducts();
     }
 
+    function filterWatchlist(q) {
+        watchlistQuery = q.trim().toLowerCase();
+        renderProducts();
+    }
+
+    function wlChipFilter(keyword) {
+        const input = document.getElementById('search-watchlist');
+        if (input) {
+            if (watchlistQuery === keyword) {
+                input.value = '';
+                filterWatchlist('');
+            } else {
+                input.value = keyword;
+                filterWatchlist(keyword);
+            }
+        }
+    }
+
     function renderProducts() {
-        const tbody = document.getElementById('products-tbody');
+        const tbody  = document.getElementById('products-tbody');
+        const countEl = document.getElementById('count-watchlist');
+        const chipsEl = document.getElementById('wl-chips');
         tbody.innerHTML = '';
+
+        // ── Chips (siempre sobre el total, sin filtro) ──
+        if (chipsEl) {
+            if (!allProducts || allProducts.length === 0) {
+                chipsEl.innerHTML = '';
+            } else {
+                const nTotal   = allProducts.length;
+                const nActive  = allProducts.filter(p => p.active !== false).length;
+                const nPaused  = allProducts.filter(p => p.active === false).length;
+                const nStock   = allProducts.filter(p => p.last_in_stock === true).length;
+                const nEmpty   = allProducts.filter(p => p.last_in_stock === false).length;
+                const qLow = watchlistQuery.toLowerCase();
+                const isActive = (kw) => qLow === kw ? 'active' : '';
+                chipsEl.innerHTML = [
+                    { cls:'chip-all',   icon:'📦', label:'Total',   num: nTotal,  kw:'' },
+                    { cls:'chip-stock', icon:'🟢', label:'Activos',  num: nActive, kw:'activo' },
+                    { cls:'chip-error', icon:'⏸️',  label:'Pausados', num: nPaused, kw:'pausado' },
+                    { cls:'chip-stock', icon:'✅',   label:'En stock', num: nStock,  kw:'en stock' },
+                    { cls:'chip-empty', icon:'❌',   label:'Agotados', num: nEmpty,  kw:'agotado' },
+                ].filter(c => c.num > 0 || c.kw === '').map(c => `
+                    <button class="avail-chip ${c.cls} ${isActive(c.kw)}"
+                            onclick="wlChipFilter('${c.kw}')" title="Filtrar: ${c.label}">
+                        <span>${c.icon}</span>
+                        <span class="chip-num">${c.num}</span>
+                        <span>${c.label}</span>
+                    </button>
+                `).join('');
+            }
+        }
+
         if (!allProducts || allProducts.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" class="empty-row">No hay productos en la watchlist.</td></tr>';
+            countEl.classList.add('hidden');
             return;
         }
-        allProducts.forEach((p, i) => {
+        // Filtrar por query (incluye estado activo/pausado y stock como términos)
+        const q = watchlistQuery;
+        const visible = q
+            ? allProducts.filter(p => [
+                p.name, p.last_seller, p.last_price, p.url,
+                p.active !== false ? 'activo' : 'pausado',
+                p.last_in_stock === true  ? 'en stock' : '',
+                p.last_in_stock === false ? 'agotado'  : ''
+              ].some(v => v && String(v).toLowerCase().includes(q)))
+            : allProducts;
+        // Actualizar contador
+        if (q) {
+            countEl.textContent = `${visible.length} de ${allProducts.length} resultado(s)`;
+            countEl.classList.remove('hidden');
+        } else {
+            countEl.classList.add('hidden');
+        }
+        if (visible.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="empty-row">Sin resultados para "${escapeHtml(q)}"</td></tr>`;
+            return;
+        }
+        // Mapear índices reales para que editar/borrar apunte al índice original
+        visible.forEach(p => {
+            const i = allProducts.indexOf(p);
             const tr = document.createElement('tr');
             if (editingIndex === i) {
                 tr.innerHTML = `
@@ -224,9 +465,16 @@
                     </td>`;
             } else {
                 const activeIcon = p.active !== false ? '🟢' : '🔴';
-                const imgSrc = p.image_url || '';
+                // Intentar obtener imagen del snapshot; si no existe, derivar del ASIN en la URL
+                let imgSrc = p.image_url || '';
+                if (!imgSrc && p.url) {
+                    const asinMatch = p.url.match(/\/dp\/([A-Z0-9]{10})/);
+                    if (asinMatch) {
+                        imgSrc = `https://images-na.ssl-images-amazon.com/images/P/${asinMatch[1]}.01._SL75_.jpg`;
+                    }
+                }
                 const thumbHtml = imgSrc
-                    ? `<img src="${escapeHtml(imgSrc)}" class="wl-thumb" loading="lazy" alt="" onerror="this.style.display='none'">`
+                    ? `<img src="${escapeHtml(imgSrc)}" class="wl-thumb" loading="lazy" alt="" onerror="this.parentElement.innerHTML='<div class=\\'wl-thumb-placeholder\\'>?</div>'">`
                     : `<div class="wl-thumb-placeholder">?</div>`;
                 const stockBadge = p.last_in_stock === true
                     ? `<span class="mini-badge mini-stock">EN STOCK</span>`
@@ -312,27 +560,93 @@
     async function fetchSnapshots() {
         const res  = await fetch('api/snapshots');
         const data = await res.json();
-        const grid = document.getElementById('snapshots-grid');
-        const items = Object.values(data);
-        if (items.length === 0) {
+        allSnapshots = Object.values(data);
+        renderSnapshots();
+    }
+
+    function filterSnapshots(q) {
+        snapshotQuery = q.trim().toLowerCase();
+        renderSnapshots();
+    }
+
+    function renderSnapshots() {
+        const grid    = document.getElementById('snapshots-grid');
+        const countEl = document.getElementById('count-realtime');
+        const chipsEl = document.getElementById('avail-chips');
+
+        if (allSnapshots.length === 0) {
             grid.innerHTML = '<div class="empty-state">Sin datos de monitoreo aún.</div>';
+            countEl.classList.add('hidden');
+            if (chipsEl) chipsEl.innerHTML = '';
             return;
         }
-        grid.innerHTML = items.map(s => {
+
+        // ── Calcular estadísticas globales (siempre sobre todo el array) ──
+        const nTotal    = allSnapshots.length;
+        const nStock    = allSnapshots.filter(s => s.in_stock && !s.is_preorder && !s.error).length;
+        const nEmpty    = allSnapshots.filter(s => !s.in_stock && !s.error && !s.captcha_detected).length;
+        const nPre      = allSnapshots.filter(s => s.is_preorder).length;
+        const nError    = allSnapshots.filter(s => s.error || s.captcha_detected).length;
+
+        // Chip activo según query actual
+        const qLow = snapshotQuery.toLowerCase();
+        const chipActive = (keyword) => qLow === keyword ? 'active' : '';
+
+        if (chipsEl) {
+            chipsEl.innerHTML = [
+                { cls:'chip-all',   icon:'📊', label:'Total',    num: nTotal,  kw:'' },
+                { cls:'chip-stock', icon:'✅',   label:'En stock', num: nStock,  kw:'en stock' },
+                { cls:'chip-empty', icon:'❌',   label:'Agotado',  num: nEmpty,  kw:'agotado' },
+                { cls:'chip-pre',   icon:'⏳',   label:'Preventa', num: nPre,    kw:'preventa' },
+                { cls:'chip-error', icon:'⚠️',   label:'Error',    num: nError,  kw:'error' },
+            ].filter(c => c.num > 0 || c.kw === '').map(c => `
+                <button class="avail-chip ${c.cls} ${chipActive(c.kw)}"
+                        onclick="chipFilter('${c.kw}')" title="Filtrar: ${c.label}">
+                    <span>${c.icon}</span>
+                    <span class="chip-num">${c.num}</span>
+                    <span>${c.label}</span>
+                </button>
+            `).join('');
+        }
+
+        const q = snapshotQuery;
+        const visible = q
+            ? allSnapshots.filter(s => [
+                s.title, s.name, s.seller, s.price,
+                s.availability_text, s.in_stock ? 'en stock' : 'agotado',
+                s.is_preorder ? 'preventa' : '',
+                (s.error || s.captcha_detected) ? 'error' : ''
+              ].some(v => v && String(v).toLowerCase().includes(q)))
+            : allSnapshots;
+        if (q) {
+            countEl.textContent = `${visible.length} de ${allSnapshots.length} resultado(s)`;
+            countEl.classList.remove('hidden');
+        } else {
+            countEl.classList.add('hidden');
+        }
+        if (visible.length === 0) {
+            grid.innerHTML = `<div class="empty-state">Sin resultados para "${escapeHtml(q)}"</div>`;
+            return;
+        }
+        grid.innerHTML = visible.map(s => {
             const badgeClass = s.in_stock ? 'badge-stock' : 'badge-empty';
             const badgeText  = s.in_stock ? 'EN STOCK' : 'AGOTADO';
+            const preTag     = s.is_preorder ? ' <span style="font-size:.7rem;background:rgba(245,158,11,.2);color:#f59e0b;border-radius:4px;padding:1px 5px;">PREVENTA</span>' : '';
             const imgHtml = s.image_url ? `<img src="${s.image_url}" class="snap-image" loading="lazy" alt="img">` : `<div class="snap-image-placeholder">No Img</div>`;
+            const displayName   = q ? hlText(s.title || s.name || '', q) : escapeHtml(s.title || s.name || '');
+            const displaySeller = q ? hlText(s.seller || '', q)          : escapeHtml(s.seller || '');
+            const displayPrice  = q ? hlText(s.price || 'N/D', q)        : escapeHtml(s.price || 'N/D');
             return `
             <div class="snapshot-item ${s.in_stock ? 'item-stock' : 'item-empty'}">
                 <div class="snap-top">
-                    <span class="badge ${badgeClass}">${badgeText}</span>
-                    <span class="snap-seller">${escapeHtml(s.seller || '')}</span>
+                    <span class="badge ${badgeClass}">${badgeText}${preTag}</span>
+                    <span class="snap-seller">${displaySeller}</span>
                 </div>
                 <div class="snap-content">
                     ${imgHtml}
                     <div class="snap-details">
-                        <div class="snap-title" title="${escapeHtml(s.title || s.name || '')}">${escapeHtml(s.title || s.name || '')}</div>
-                        <div class="price-tag">${escapeHtml(s.price || 'N/D')}</div>
+                        <div class="snap-title" title="${escapeHtml(s.title || s.name || '')}">${displayName}</div>
+                        <div class="price-tag">${displayPrice}</div>
                     </div>
                 </div>
                 <a href="${escapeHtml(s.url)}" target="_blank" class="amazon-link">Ver en Amazon →</a>
@@ -340,28 +654,71 @@
         }).join('');
     }
 
+    /** Filtra snapshots desde un chip de disponibilidad */
+    function chipFilter(keyword) {
+        const input = document.getElementById('search-realtime');
+        if (input) {
+            // Toggle: si ya está activo ese filtro, limpiar
+            if (snapshotQuery === keyword) {
+                input.value = '';
+                filterSnapshots('');
+            } else {
+                input.value = keyword;
+                filterSnapshots(keyword);
+            }
+        }
+    }
+
     // ── Discovery ─────────────────────────────────────────────────────────────
     async function fetchDiscovery() {
         const res   = await fetch('api/discovered');
-        const items = await res.json();
-        const grid  = document.getElementById('discovery-grid');
-        if (!items || items.length === 0) {
+        allDiscoveries = await res.json();
+        renderDiscovery();
+    }
+
+    function filterDiscovery(q) {
+        discoveryQuery = q.trim().toLowerCase();
+        renderDiscovery();
+    }
+
+    function renderDiscovery() {
+        const grid    = document.getElementById('discovery-grid');
+        const countEl = document.getElementById('count-discovery');
+        if (!allDiscoveries || allDiscoveries.length === 0) {
             grid.innerHTML = '<div class="empty-state">Aún no se descubrieron productos nuevos.</div>';
+            countEl.classList.add('hidden');
             return;
         }
-        grid.innerHTML = items.slice(0, 80).map(d => {
+        const q = discoveryQuery;
+        const pool = allDiscoveries.slice(0, 80);
+        const visible = q
+            ? pool.filter(d => [d.name, d.asin, d.price].some(v => v && String(v).toLowerCase().includes(q)))
+            : pool;
+        if (q) {
+            countEl.textContent = `${visible.length} de ${pool.length} resultado(s)`;
+            countEl.classList.remove('hidden');
+        } else {
+            countEl.classList.add('hidden');
+        }
+        if (visible.length === 0) {
+            grid.innerHTML = `<div class="empty-state">Sin resultados para "${escapeHtml(q)}"</div>`;
+            return;
+        }
+        grid.innerHTML = visible.map(d => {
             const age = d.first_seen ? timeAgo(d.first_seen) : 'Desconocido';
             const isFresh = d.first_seen && (Date.now()/1000 - d.first_seen) < 20*60;
             const imgHtml = d.image_url ? `<img src="${d.image_url}" class="disc-image" loading="lazy" alt="img">` : `<div class="snap-image-placeholder">No Img</div>`;
+            const displayName  = q ? hlText(d.name, q)           : escapeHtml(d.name);
+            const displayPrice = q ? hlText(d.price || 'N/D', q) : escapeHtml(d.price || 'N/D');
             return `
             <div class="disc-item ${isFresh ? 'disc-fresh' : ''}">
                 ${isFresh ? '<span class="fresh-badge">🆕 NUEVO</span>' : ''}
                 <div class="disc-content">
                     ${imgHtml}
                     <div class="disc-details">
-                        <div class="disc-name" title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</div>
+                        <div class="disc-name" title="${escapeHtml(d.name)}">${displayName}</div>
                         <div class="disc-meta">ASIN: ${escapeHtml(d.asin)} &bull; ${age}</div>
-                        <div class="disc-price">${escapeHtml(d.price || 'N/D')}</div>
+                        <div class="disc-price">${displayPrice}</div>
                     </div>
                 </div>
                 <div class="disc-actions">
@@ -407,6 +764,14 @@
     function escapeHtml(str) {
         if (!str) return '';
         return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    /** Resalta la query dentro de un texto (retorna HTML seguro con <mark>) */
+    function hlText(str, q) {
+        if (!str || !q) return escapeHtml(str);
+        const safe = escapeHtml(str);
+        const safeQ = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return safe.replace(new RegExp(`(${safeQ})`, 'gi'), '<mark class="hl">$1</mark>');
     }
 
     function timeAgo(ts) {

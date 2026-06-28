@@ -1,0 +1,11 @@
+[
+  {
+    "time": "04:00",
+    "message": "Hola, aquí está el estado actual del bot:\n\n{REPORTE_DIARIO}",
+    "channels": [
+      "telegram",
+      "whatsapp_bridge"
+    ],
+    "enabled": true
+  }
+]

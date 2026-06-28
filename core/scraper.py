@@ -15,6 +15,8 @@ from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 from urllib.parse import urlparse, urlunparse, urlencode, parse_qs
+import os
+import threading
 
 from scrapling.fetchers import Fetcher, StealthyFetcher
 from scrapling.engines.toolbelt.proxy_rotation import ProxyRotator
@@ -22,6 +24,10 @@ from scrapling.engines.toolbelt.proxy_rotation import ProxyRotator
 # StealthyFetcher usa un navegador real (Camoufox/Firefox) con anti-fingerprinting
 # Es más lento pero prácticamente indetectable por Amazon
 _USE_STEALTH = True  # Cambiar a False para volver al modo HTTP simple
+
+# Directorio base para guardar cookies y sesión de navegador
+_BASE_USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "browser_profiles")
+os.makedirs(_BASE_USER_DATA_DIR, exist_ok=True)
 
 # Dominios de tracking/analytics que Amazon carga pero son innecesarios para el scraping
 _BLOCKED_DOMAINS = {
@@ -56,7 +62,19 @@ class ProductSnapshot:
     image_url: Optional[str] = None # URL de la imagen del producto
     is_preorder: bool = False     # True si el producto está en preventa
     sellers: list[str] = field(default_factory=list) # Lista de vendedores encontrados
-    bytes_downloaded: int = 0     # Ancho de banda consumido en bytes
+    bytes_downloaded: int = 0     # (Deprecado, mantener para compatibilidad)
+    bytes_vps: int = 0            # Bytes descargados directo del VPS
+    bytes_proxy: int = 0          # Bytes descargados a través del Proxy
+    vps_blocked: bool = False     # True si Amazon bloqueó la IP del VPS en este ciclo
+
+def get_page_stats(page) -> tuple[int, int, bool]:
+    """Extrae el tamaño de la página y calcula las estadísticas de red."""
+    size = get_page_size(page)
+    proxy_used = getattr(page, 'proxy_used', False)
+    vps_blocked = getattr(page, 'vps_blocked', False)
+    bytes_vps = 0 if proxy_used else size
+    bytes_proxy = size if proxy_used else 0
+    return bytes_vps, bytes_proxy, vps_blocked
 
 # ─── Configuración de Proxies ────────────────────────────────────────────────
 PROXIES_FILE = Path(__file__).resolve().parent.parent / "data" / "proxies.txt"
@@ -109,34 +127,71 @@ def clean_amazon_url(url: str) -> str:
 
 def get_page(url: str):
     """
-    Obtiene una página usando StealthyFetcher con optimizaciones de ancho de banda:
-    - disable_resources: bloquea imágenes, CSS, fuentes y media (ahorra ~80% de ancho de banda)
-    - blocked_domains: bloquea tracking y analytics
-    - block_ads: bloquea publicidad
+    Obtiene una página usando StealthyFetcher con enrutamiento inteligente y optimizaciones de caché:
+    1. Intenta desde el VPS directo (Sin Proxy) usando un perfil persistente (cookies)
+    2. Si salta CAPTCHA, cae al proxy residencial
     """
-    # Siempre limpiar la URL antes de hacer la petición
     url = clean_amazon_url(url)
     proxy = random.choice(_all_proxies) if _all_proxies else None
     
+    def _check_captcha(p) -> bool:
+        if not p or not p.body: return False
+        return bool(p.css("form[action='/errors/validateCaptcha']"))
+
     if _USE_STEALTH:
+        # Generar un perfil único por hilo para evitar que Chromium bloquee la carpeta (SingletonLock)
+        thread_id = str(threading.get_ident())
+        thread_data_dir = os.path.join(_BASE_USER_DATA_DIR, f"profile_{thread_id}")
+        
+        # Intento 1: Sin proxy (Internet del VPS = 0 costo) con persistencia de cookies
         try:
-            return StealthyFetcher.fetch(
+            page = StealthyFetcher.fetch(
                 url,
-                proxy=proxy,
+                proxy=None,  # <-- ¡Directo desde el VPS!
                 headless=True,
                 network_idle=False,
-                disable_resources=True,   # ⭐ Bloquea imágenes/CSS/fuentes/media
-                block_ads=True,           # ⭐ Bloquea publicidad
-                blocked_domains=_BLOCKED_DOMAINS,  # ⭐ Bloquea tracking de Amazon
+                disable_resources=True,
+                block_ads=True,
+                blocked_domains=_BLOCKED_DOMAINS,
+                user_data_dir=thread_data_dir, # <-- Persistencia de cookies por hilo
                 timeout=30000,
             )
+            
+            if not _check_captcha(page):
+                page.proxy_used = False
+                page.vps_blocked = False
+                return page
+            
+            logger.warning(f"[SCRAPER] CAPTCHA en VPS directo. Usando fallback proxy para {url}")
         except Exception as e:
-            logger.warning(f"[SCRAPER] StealthyFetcher falló, usando Fetcher HTTP: {e}")
+            logger.warning(f"[SCRAPER] Error en VPS directo: {e}")
+
+        # Intento 2: Fallback al Proxy Residencial
+        try:
+            page_fb = StealthyFetcher.fetch(
+                url,
+                proxy=proxy, # <-- Proxy residencial activado
+                headless=True,
+                network_idle=False,
+                disable_resources=True,
+                block_ads=True,
+                blocked_domains=_BLOCKED_DOMAINS,
+                # No usamos la misma carpeta de perfil para la IP del proxy para no cruzar huellas
+                timeout=30000,
+            )
+            page_fb.proxy_used = True
+            page_fb.vps_blocked = True
+            return page_fb
+        except Exception as e:
+            logger.warning(f"[SCRAPER] StealthyFetcher fallback falló: {e}")
     
-    # Fallback: HTTP simple
+    # Fallback final: HTTP simple
     if proxy:
         logger.debug(f"[SCRAPER] Usando proxy HTTP: {proxy[:30]}...")
-    return Fetcher.get(url, proxy=proxy, impersonate="chrome", timeout=15)
+    page_http = Fetcher.get(url, proxy=proxy, impersonate="chrome", timeout=15)
+    page_http.proxy_used = bool(proxy)
+    page_http.vps_blocked = False
+    return page_http
 
 def get_page_size(page) -> int:
     """Calcula el tamaño en bytes de la página descargada."""
@@ -407,33 +462,37 @@ def _extract_release_date(page) -> Optional[str]:
 
 # ─── Detección de Amazon MX en página de ofertas ──────────────────────────────
 
-def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str], int]:
+def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str], int, int, bool]:
     """
     Verifica vendedores en la página de ofertas.
-    Retorna (amazon_mx_presente, lista_de_vendedores, mejor_precio, bytes_descargados).
+    Retorna (amazon_mx_presente, lista_de_vendedores, mejor_precio, bytes_vps, bytes_proxy, vps_blocked).
     """
     offers_url = f"https://www.amazon.com.mx/gp/offer-listing/{asin}"
     all_sellers = []
     amazon_found = False
     best_price = None
-    bytes_downloaded = 0
+    bytes_vps = 0
+    bytes_proxy = 0
+    vps_blocked = False
     
     try:
         page = get_page(offers_url)
-        bytes_downloaded += get_page_size(page)
+        v, p, b = get_page_stats(page)
+        bytes_vps += v; bytes_proxy += p; vps_blocked = vps_blocked or b
         
         # Fallback: Si la página de ofertas estándar falla o está vacía, intentar con ?aod=1
         if page.status != 200 or "aod-offer" not in page.text:
             aod_url = f"https://www.amazon.com.mx/dp/{asin}/ref=olp-opf-redir?aod=1"
             page = get_page(aod_url)
-            bytes_downloaded += get_page_size(page)
+            v, p, b = get_page_stats(page)
+            bytes_vps += v; bytes_proxy += p; vps_blocked = vps_blocked or b
             
         if page.status != 200:
-            return False, [], None, bytes_downloaded
+            return False, [], None, bytes_vps, bytes_proxy, vps_blocked
 
         if _is_captcha(page):
             logger.warning(f"[SCRAPER] CAPTCHA en offers page ASIN={asin}")
-            return False, [], None, bytes_downloaded
+            return False, [], None, bytes_vps, bytes_proxy, vps_blocked
 
         # Extraer nombres y precios de bloques de oferta
         for offer_block in page.css("div[id^='aod-pinned-offer'], div[id^='aod-offer-']"):
@@ -496,11 +555,11 @@ def _check_amazon_mx_in_offers(asin: str) -> tuple[bool, list[str], Optional[str
             if "Amazon México" not in all_sellers:
                 all_sellers.insert(0, "Amazon México")
 
-        return amazon_found, all_sellers, best_price, bytes_downloaded
+        return amazon_found, all_sellers, best_price, bytes_vps, bytes_proxy, vps_blocked
 
     except Exception as e:
         logger.warning(f"[SCRAPER] Error verificando offers para {asin}: {e}")
-        return False, [], None, bytes_downloaded
+        return False, [], None, bytes_vps, bytes_proxy, vps_blocked
 
 
 def _has_multiple_sellers(page, text: str) -> bool:
@@ -525,10 +584,14 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
     Scrape una URL de Amazon MX y retorna un ProductSnapshot.
     No lanza excepciones; los errores van dentro del snapshot.
     """
-    bytes_downloaded = 0
+    bytes_vps = 0
+    bytes_proxy = 0
+    vps_blocked = False
+    
     try:
         page = get_page(url)
-        bytes_downloaded += get_page_size(page)
+        v, p, b = get_page_stats(page)
+        bytes_vps += v; bytes_proxy += p; vps_blocked = vps_blocked or b
 
         if page.status not in (200, 404, 503) and page.status >= 400:
             raise Exception(f"HTTP Error {page.status}")
@@ -553,7 +616,9 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
                 availability_text="CAPTCHA detectado",
                 price="N/D", captcha_detected=True,
                 normalized_title=normalize_title(product_name),
-                bytes_downloaded=bytes_downloaded
+                bytes_vps=bytes_vps,
+                bytes_proxy=bytes_proxy,
+                vps_blocked=vps_blocked
             )
 
         # Título del producto
@@ -575,6 +640,13 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
         
         if seller == "Amazon México":
             amazon_present = True
+            # FIX: si la página principal ya muestra Amazon MX como vendedor pero
+            # #availability dice "Agotado", el producto SÍ tiene stock real.
+            # Esto ocurre cuando Amazon publica el precio en el buybox pero el
+            # widget de disponibilidad aún no se ha actualizado.
+            if not in_stock:
+                in_stock = True
+                avail_text = "Disponible vía Amazon México"
 
         should_check_offers = has_multi or seller == "Desconocido"
         
@@ -585,9 +657,11 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
             asin_match = re.search(r"/dp/([A-Z0-9]{10})", url)
             if asin_match:
                 asin = asin_match.group(1)
-                amazon_present_offers, sellers_list, offers_price, offers_bytes = _check_amazon_mx_in_offers(asin)
+                amazon_present_offers, sellers_list, offers_price, v2, p2, b2 = _check_amazon_mx_in_offers(asin)
                 amazon_present = amazon_present or amazon_present_offers
-                bytes_downloaded += offers_bytes
+                bytes_vps += v2
+                bytes_proxy += p2
+                vps_blocked = vps_blocked or b2
                 
                 # Si no teníamos precio real, usar el de las ofertas
                 if (price == "No disponible" or ".." in price) and offers_price:
@@ -621,7 +695,9 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
             image_url=image_url,
             is_preorder=is_preorder,
             sellers=all_sellers,
-            bytes_downloaded=bytes_downloaded
+            bytes_vps=bytes_vps,
+            bytes_proxy=bytes_proxy,
+            vps_blocked=vps_blocked
         )
 
     except Exception as e:
@@ -629,10 +705,12 @@ def scrape(product_name: str, url: str, amazon_only: bool = True) -> ProductSnap
         return ProductSnapshot(
             name=product_name, url=url,
             title=product_name, in_stock=False,
-            availability_text="Error de conexión",
-            price="N/D", error=str(e),
+            availability_text="Error interno", price="N/D",
+            error=str(e),
             normalized_title=normalize_title(product_name),
-            bytes_downloaded=bytes_downloaded
+            bytes_vps=bytes_vps,
+            bytes_proxy=bytes_proxy,
+            vps_blocked=vps_blocked
         )
 
 

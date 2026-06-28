@@ -51,40 +51,44 @@
   {
     "name": "Pokémon TCG: Mega Evolution - Ascended Heroes Collection-Erika (1 Foil Promo Card, 1 Coin & 2 Booster Packs)",
     "url": "https://a.co/d/0eCt7jMN",
-    "active": true
+    "active": true,
+    "amazon_only": true,
+    "max_price": null
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mega Meganium ex Box (1 Foil Promo Card, 1 Oversize Lenticular Card & 4 Booster Packs)",
     "url": "https://a.co/d/09uf971B",
     "active": true,
-    "amazon_only": false,
+    "amazon_only": true,
     "max_price": 600.0
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mega Feraligatr ex Box (1 Foil Promo Card, 1 Oversize Lenticular Card & 4 Booster Packs)",
     "url": "https://a.co/d/0eDs8RrT",
     "active": true,
-    "amazon_only": false,
+    "amazon_only": true,
     "max_price": 600.0
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mega Emboar ex Box (1 Foil Promo Card, 1 Oversize Lenticular Card & 4 Booster Packs)",
     "url": "https://a.co/d/0hA5JQaR",
     "active": true,
-    "amazon_only": false,
+    "amazon_only": true,
     "max_price": 600.0
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Tech Sticker Collection - Gastly, 3 Piezas",
     "url": "https://a.co/d/0baINKLH",
-    "active": true
+    "active": true,
+    "amazon_only": true,
+    "max_price": null
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Chaos Rising Booster Bundle",
     "url": "https://a.co/d/05Hx0wXw",
     "active": true,
     "amazon_only": true,
-    "max_price": 750.0
+    "max_price": 700.0
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Tech Sticker Collection - Charmander",
@@ -97,19 +101,14 @@
     "name": "Pokémon TCG: First Partner Illustration Collection—Series 3",
     "url": "https://a.co/d/04ON1FEM",
     "active": true,
-    "amazon_only": false,
+    "amazon_only": true,
     "max_price": 600.0
-  },
-  {
-    "name": "Pokémon TCG: Iono's Bellibolt ex Premium Collection",
-    "url": "https://a.co/d/07LJHhFI",
-    "active": true
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Chaos Rising Elite Trainer Box, 1 Pieza",
     "url": "https://a.co/d/01Vndz5C",
     "active": true,
-    "amazon_only": false,
+    "amazon_only": true,
     "max_price": 1100.0
   },
   {
@@ -118,13 +117,6 @@
     "active": true,
     "amazon_only": true,
     "max_price": 450.0
-  },
-  {
-    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes - Premium Poster Collection—Mega Gardevoir, 10 Piezas LINK 2",
-    "url": "https://a.co/d/05nvUFdi",
-    "active": true,
-    "amazon_only": true,
-    "max_price": 1400.0
   },
   {
     "name": "Pokémon TCG: Mega Evolution—Pitch Black Booster Bundle",
@@ -138,7 +130,7 @@
     "url": "https://a.co/d/0a76bOkV",
     "active": true,
     "amazon_only": true,
-    "max_price": null
+    "max_price": 600.0
   },
   {
     "name": "Pokémon TCG: Scarlet & Violet—Prismatic Evolutions Booster Bundle",
@@ -159,7 +151,7 @@
     "url": "https://a.co/d/06Ho6JqQ",
     "active": true,
     "amazon_only": true,
-    "max_price": null
+    "max_price": 600.0
   },
   {
     "name": "Pokémon TCG: Scarlet & Violet—Prismatic Evolutions Premium Figure Collection",
@@ -200,8 +192,8 @@
     "name": "Pokémon TCG: Mega Evolution—Chaos Rising Build & Battle Box",
     "url": "https://a.co/d/0dVX31g5",
     "active": true,
-    "amazon_only": false,
-    "max_price": null
+    "amazon_only": true,
+    "max_price": 500.0
   },
   {
     "name": "Pokémon Mega Greninja ex Premium Collection",
@@ -211,9 +203,149 @@
     "max_price": null
   },
   {
-    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes First Partners Deluxe Pin Collection (3 Tarjetas Promocionales de Aluminio, 1 Pin de Lujo y 5 Paquetes de Refuerzo",
-    "url": "https://www.amazon.com.mx/dp/B0G71VXSWN",
+    "name": "Pokemon - Colección de calcomanías Tech, TCG: Escarlata y Violeta 8.5, Evoluciones Prismáticas (promoción aleatoria)",
+    "url": "https://a.co/d/0ji39zWp",
     "max_price": 600.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet—Prismatic Evolutions Super-Premium Collection",
+    "url": "https://a.co/d/07FmQFnH",
+    "max_price": 2500.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Chaos Rising Three-Booster Blister",
+    "url": "https://a.co/d/02GnGGWX",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokemon TCG: Mega Evolution: Ascended Heroes: Paquete de 2 ampollas (promoción aleatoria)",
+    "url": "https://a.co/d/04yGyfOJ",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mini Tin - Pikachu and Tepig",
+    "url": "https://a.co/d/03VQ4UM3",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mini Tin - Riolu and Darumaka",
+    "url": "https://a.co/d/0edkl6s1",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mini Tin - Togepi and Totodile",
+    "url": "https://a.co/d/0bihAXwo",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mini Tin - Clefairy and Chikorita",
+    "url": "https://a.co/d/0epWzHHT",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Evolution—Ascended Heroes Mini Tin - Zorua and Cramorant",
+    "url": "https://a.co/d/0iTPXFCo",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Scarlet & Violet—Prismatic Evolutions Binder Collection",
+    "url": "https://a.co/d/09WVbYqh",
+    "max_price": 1500.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet Scarlet & Violet—Prismatic Evolutions Elite Trainer Box",
+    "url": "https://a.co/d/03LA1qWp",
+    "max_price": 1500.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet —Prismatic Evolutions Accessory Pouch Collection",
+    "url": "https://a.co/d/01it5E79",
+    "max_price": 1500.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet—Prismatic Evolutions Poster Collection",
+    "url": "https://a.co/d/0hz94TVE",
+    "max_price": 600.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Mega Charizard X ex Ultra-Premium Collection",
+    "url": "https://a.co/d/07rm4xfi",
+    "max_price": 2500.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Venusaur ex & Blastoise ex Premium Collection",
+    "url": "https://a.co/d/00qRpwfA",
+    "max_price": null,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet —Prismatic Evolutions Mini Tin - Espeon",
+    "url": "https://a.co/d/08LELP4g",
+    "max_price": 400.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet y Violet: Evoluciones prismáticas, blíster de dos sobres",
+    "url": "https://a.co/d/0aTUqOG5",
+    "max_price": 600.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet - Destined Rivals - Booster Bundle",
+    "url": "https://a.co/d/07aMaYkG",
+    "max_price": 750.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet - Destined Rivals - Elite Trainer Box",
+    "url": "https://a.co/d/0517Palg",
+    "max_price": 1300.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokémon TCG: Scarlet & Violet - Destined Rivals - Build & Battle Box",
+    "url": "https://a.co/d/03uPM2ms",
+    "max_price": 700.0,
+    "amazon_only": true,
+    "active": true
+  },
+  {
+    "name": "Pokemon TCG Unova Heavy Hitters Colección Premium",
+    "url": "https://a.co/d/0b6nLhGu",
+    "max_price": 1200.0,
     "amazon_only": true,
     "active": true
   }

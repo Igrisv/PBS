@@ -42,6 +42,7 @@ STATE_FILE          = BASE_DIR / "data" / "monitor_state.json"
 DISCOVERED_FILE     = BASE_DIR / "data" / "discovered.json"
 DISCOVERY_CONFIG    = BASE_DIR / "data" / "discovery_config.json"
 NOTIF_CONFIG        = BASE_DIR / "data" / "notif_config.json"
+STATS_FILE          = BASE_DIR / "data" / "stats.json"
 
 # Lock mechanism: use a file-based lock for multi-process safety
 GLOBAL_LOCK_FILE = BASE_DIR / "data" / "app.lock"
@@ -65,6 +66,7 @@ DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN", "")
 DISCOVERY_CONFIG = Path(BASE_DIR) / "data" / "discovery_config.json"
 NOTIF_CONFIG     = Path(BASE_DIR) / "data" / "notif_config.json"
 OPERATIONAL_CONFIG = Path(BASE_DIR) / "data" / "operational_config.json"
+SCHEDULED_NOTICES_FILE = Path(BASE_DIR) / "data" / "scheduled_notices.json"
 
 # --- JSON Helpers ---
 def get_json_data(file_path):
@@ -118,6 +120,7 @@ def get_status():
     products   = get_json_data(PRODUCTS_FILE)
     snapshots  = get_json_data(STATE_FILE)
     discovered = get_json_data(DISCOVERED_FILE)
+    stats      = get_json_data(STATS_FILE)
     active_count = len([p for p in products if p.get("active", True)]) if isinstance(products, list) else 0
     disc_count   = len(discovered) if isinstance(discovered, (list, dict)) else 0
     return jsonify({
@@ -125,7 +128,8 @@ def get_status():
         "active_count":    active_count,
         "memory_count":    len(snapshots),
         "discovered_count": disc_count,
-        "status": "Running"
+        "status": "Running",
+        "network_stats": stats
     })
 
 
@@ -217,7 +221,16 @@ def product_by_index(index):
 
 @app.route("/api/snapshots")
 def get_snapshots():
-    return jsonify(get_json_data(STATE_FILE))
+    state = get_json_data(STATE_FILE)
+    products = get_json_data(PRODUCTS_FILE)
+    
+    # Crear un set con las URLs activas en la watchlist
+    active_urls = {p.get("url") for p in products if isinstance(p, dict) and "url" in p}
+    
+    # Filtrar el estado para devolver solo los snapshots de las URLs activas
+    filtered_state = {url: data for url, data in state.items() if url in active_urls}
+    
+    return jsonify(filtered_state)
 
 
 @app.route("/api/discovered")
@@ -424,6 +437,29 @@ def admin_broadcast():
         results = broadcast_admin_message(str(NOTIF_CONFIG), msg, channels)
     
     return jsonify({"success": True, "results": results})
+
+
+@app.route("/api/admin/scheduled-notices", methods=["GET"])
+def get_scheduled_notices():
+    if not check_token():
+        return jsonify({"error": "Unauthorized"}), 401
+    notices = get_json_data(SCHEDULED_NOTICES_FILE)
+    if isinstance(notices, dict): # Handle empty file default
+        notices = []
+    return jsonify(notices)
+
+
+@app.route("/api/admin/scheduled-notices", methods=["POST"])
+def update_scheduled_notices():
+    if not check_token():
+        return jsonify({"error": "Unauthorized"}), 401
+    data = request.json or []
+    if not isinstance(data, list):
+        return jsonify({"error": "Data must be a list"}), 400
+    with get_shared_lock():
+        with open(SCHEDULED_NOTICES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    return jsonify({"success": True})
 
 
 def start_web_server(host="0.0.0.0", port=5000, shared_lock=None):

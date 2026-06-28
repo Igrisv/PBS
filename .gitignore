@@ -41,3 +41,7 @@ auto_buyer/amazon_session.json*
 auto_buyer/debug_*.png
 auto_buyer/*.log
 auto_buyer/bought_products.json
+
+# Browser data
+data/browser_profile/
+data/browser_profiles/
